@@ -21,7 +21,7 @@ assert.match(
 );
 assert.match(
   index,
-  /<script src="script\.js\?v=20260914-8"><\/script>/,
+  /<script src="script\.js\?v=20260914-9"><\/script>/,
   'the application script cache key must be updated with this release',
 );
 

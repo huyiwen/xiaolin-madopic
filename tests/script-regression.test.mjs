@@ -123,6 +123,7 @@ const context = vm.createContext({
   decodeURIComponent,
 });
 
+vm.runInContext(readFileSync(resolve(root, 'documents.js'), 'utf8'), context, { filename: 'documents.js' });
 vm.runInContext(source, context, { filename: 'script.js' });
 const run = (code) => vm.runInContext(code, context);
 run('restoringApp = false;');
@@ -591,6 +592,51 @@ run('currentHeaderFooter = normalizeHeaderFooterSettings(); currentPreviewPage =
 await exportPageRenderer(numberSnapshot, 1);
 assert.deepEqual(exportedCorners.map(node => node.textContent), ['笔记 · 2', '第 2 / 3 页', '2 / 3']);
 assert.equal(exportContent.innerHTML, '乙');
+
+// Document names share sidebar title rules and stay fixed throughout a multi-page export.
+run(`
+  documentLibrary = null;
+  markdownInput.value = '\\n# 自动文档标题\\n\\n正文';
+`);
+assert.equal(run('getCurrentDocumentName()'), '自动文档标题');
+run('markdownInput.value = "";');
+assert.equal(run('getCurrentDocumentName()'), '未命名文档');
+run(`
+  documentLibrary = { active: { name: '研究笔记 <img src=x onerror=alert(1)>' } };
+  markdownInput.value = '# 正文标题';
+  globalThis.documentNameSettings = normalizeHeaderFooterSettings({
+    'top-left': { pageNumber: 'document-name', fontSize: 18, bold: true },
+    'bottom-left': { text: '文档', pageNumber: 'document-name' },
+    'bottom-right': { pageNumber: 'total' }
+  });
+  currentHeaderFooter = documentNameSettings;
+  renderHeaderFooter(testCornerPoster);
+  saveSettings();
+  globalThis.documentNameSnapshot = createExportSnapshot();
+`);
+const capturedName = '研究笔记 <img src=x onerror=alert(1)>';
+assert.equal(cornerNodes[0].textContent, capturedName, 'document names must be rendered as literal text');
+assert.equal(cornerNodes[0].innerHTML, undefined);
+assert.equal(cornerNodes[0].style.fontSize, '18px');
+assert.equal(cornerNodes[0].style.fontWeight, '700');
+assert.equal(cornerNodes[1].textContent, `文档 · ${capturedName}`);
+assert.equal(JSON.parse(savedValues.get('madopic_settings')).headerFooter['top-left'].pageNumber, 'document-name');
+assert.equal(run('documentNameSnapshot.documentName'), capturedName);
+run(`documentLibrary.active.name = '改名后的文档'; renderHeaderFooter(testCornerPoster);`);
+assert.equal(cornerNodes[0].textContent, '改名后的文档', 'preview should use the current document name');
+const documentSnapshot = {
+  ...run('documentNameSnapshot'),
+  pages: ['甲', '乙'],
+  template: { cloneNode() { return exportPoster; } },
+};
+exportedCorners.length = 0;
+await exportPageRenderer(documentSnapshot, 0);
+await exportPageRenderer(documentSnapshot, 1);
+assert.deepEqual(exportedCorners.map(node => node.textContent), [
+  capturedName, `文档 · ${capturedName}`, '1 / 2',
+  capturedName, `文档 · ${capturedName}`, '2 / 2',
+], 'all export pages must retain the captured name after renaming or switching documents');
+run('documentLibrary = null; currentHeaderFooter = normalizeHeaderFooterSettings();');
 
 // Arrow keys navigate only outside text editing and settings dialogs.
 const handlePageKey = run('handlePreviewPageKeydown');

@@ -13,6 +13,10 @@ class MadopicDocumentLibrary {
     }
 
     title(record) {
+        return MadopicDocumentLibrary.title(record);
+    }
+
+    static title(record) {
         const firstLine = record.content.split(/\r?\n/).find(line => line.trim()) || '';
         return record.name || firstLine.replace(/^\s*#{1,6}\s+/, '').trim().slice(0, 40) || '未命名文档';
     }

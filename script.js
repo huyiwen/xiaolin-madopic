@@ -81,7 +81,8 @@ function normalizeHeaderFooterSettings(settings = {}) {
             fontSize: Number.isFinite(fontSize) ? Math.max(8, Math.min(32, fontSize)) : 12,
             color: /^#[0-9a-f]{6}$/i.test(value.color) ? value.color : '#ffffff',
             font: Object.hasOwn(HEADER_FOOTER_FONTS, value.font) ? value.font : 'sans',
-            pageNumber: ['current', 'total', 'label'].includes(value.pageNumber) ? value.pageNumber : 'none',
+            // 沿用 pageNumber 字段，兼容已有设置；额外显示也支持文档名称。
+            pageNumber: ['current', 'total', 'label', 'document-name'].includes(value.pageNumber) ? value.pageNumber : 'none',
             bold: value.bold === true,
             italic: value.italic === true
         }];
@@ -1773,20 +1774,28 @@ function closeAllPanels() {
     document.body.style.overflow = '';
 }
 
-function formatHeaderFooterText(value, pageNumber, totalPages) {
+function getCurrentDocumentName() {
+    return MadopicDocumentLibrary.title({
+        name: documentLibrary?.active?.name || '',
+        content: markdownInput.value
+    });
+}
+
+function formatHeaderFooterText(value, pageNumber, totalPages, documentName) {
     const formats = {
         current: `${pageNumber}`,
         total: `${pageNumber} / ${totalPages}`,
-        label: `第 ${pageNumber} / ${totalPages} 页`
+        label: `第 ${pageNumber} / ${totalPages} 页`,
+        'document-name': documentName
     };
-    const number = formats[value.pageNumber] || '';
-    return value.text.trim() && number ? `${value.text} · ${number}` : (number || value.text);
+    const extra = formats[value.pageNumber] || '';
+    return value.text.trim() && extra ? `${value.text} · ${extra}` : (extra || value.text);
 }
 
-function renderHeaderFooter(poster, settings = currentHeaderFooter, pageNumber = currentPreviewPage + 1, totalPages = previewPages.length) {
+function renderHeaderFooter(poster, settings = currentHeaderFooter, pageNumber = currentPreviewPage + 1, totalPages = previewPages.length, documentName = getCurrentDocumentName()) {
     poster.querySelectorAll('.poster-corner').forEach(element => element.remove());
     Object.entries(settings).forEach(([corner, value]) => {
-        const content = formatHeaderFooterText(value, pageNumber, totalPages);
+        const content = formatHeaderFooterText(value, pageNumber, totalPages, documentName);
         if (!content.trim()) return;
         const text = document.createElement('div');
         text.className = `poster-corner poster-corner-${corner}`;
@@ -1809,12 +1818,13 @@ function setupHeaderFooterPanel() {
         <fieldset class="corner-settings" data-corner="${corner}">
             <legend>${label}</legend>
             <label for="${corner}-text">文字内容</label>
-            <textarea id="${corner}-text" data-field="text" rows="2" placeholder="留空可仅显示页码"></textarea>
-            <label class="corner-page-number">页码<select data-field="pageNumber" aria-label="${label}页码">
+            <textarea id="${corner}-text" data-field="text" rows="2" placeholder="留空可仅显示下方所选内容"></textarea>
+            <label class="corner-page-number">额外显示<select data-field="pageNumber" aria-label="${label}额外显示">
                 <option value="none">不显示</option>
                 <option value="current">当前页：1</option>
                 <option value="total">页码 / 总页数：1 / 3</option>
                 <option value="label">第 1 / 3 页</option>
+                <option value="document-name">当前文档名称</option>
             </select></label>
             <div class="corner-style-controls">
                 <label>字体<select data-field="font" aria-label="${label}字体">
@@ -2139,6 +2149,7 @@ function createExportSnapshot() {
         pages: pages.map(replaceImageDataForPreview),
         template: createExportTemplate(),
         headerFooter: normalizeHeaderFooterSettings(headerFooterDraft || currentHeaderFooter),
+        documentName: getCurrentDocumentName(),
         filename: `madopic-${getFormattedTimestamp()}`
     };
 }
@@ -2158,7 +2169,7 @@ async function createExactExportNode(snapshot = null, pageIndex = 0) {
     try {
         const content = clone.querySelector('.poster-content');
         if (snapshot && content) content.innerHTML = prepareMarkdownHTML(snapshot.pages[pageIndex]);
-        if (snapshot) renderHeaderFooter(clone, snapshot.headerFooter, pageIndex + 1, snapshot.pages.length);
+        if (snapshot) renderHeaderFooter(clone, snapshot.headerFooter, pageIndex + 1, snapshot.pages.length, snapshot.documentName);
         document.body.appendChild(clone);
 
         // 为导出节点重新渲染数学公式
@@ -4027,6 +4038,7 @@ function setupDocumentSidebar() {
     });
     document.getElementById('documentName').addEventListener('input', event => {
         documentLibrary?.save(markdownInput.value, event.target.value.trim().slice(0, 80)).catch(() => {});
+        renderHeaderFooter(markdownPoster, headerFooterDraft || currentHeaderFooter);
     });
     document.getElementById('retryDocumentSave').addEventListener('click', () => perform(() => documentLibrary.flush()));
     window.addEventListener('pagehide', () => autoSave(markdownInput.value));
