@@ -21,13 +21,13 @@ assert.match(
 );
 assert.match(
   index,
-  /<script src="script\.js\?v=20260914-6"><\/script>/,
+  /<script src="script\.js\?v=20260914-7"><\/script>/,
   'the application script cache key must be updated with this release',
 );
 
 assert.match(
   index,
-  /<link rel="stylesheet" href="style\.css\?v=20260914-3">/,
+  /<link rel="stylesheet" href="style\.css\?v=20260914-4">/,
   'the stylesheet cache key must be updated with this release',
 );
 
@@ -74,6 +74,9 @@ assert.ok(
 );
 
 assert.match(script, /trust:\s*false/, 'KaTeX trust mode should stay disabled');
+assert.ok(index.includes('<meta name="darkreader-lock">'), 'browser darkening must not recolor poster previews and exports');
+assert.match(style, /color-scheme:\s*only light/, 'the app must use explicit colors instead of browser auto-darkening');
+assert.match(index, /<script src="documents\.js\?v=[^"]+"><\/script>\s*<script src="script\.js/, 'the document library must load before the application');
 assert.match(
   script,
   /htmlContent\s*=\s*sanitizeHTML\(htmlContent\);[\s\S]*?element\.innerHTML\s*=\s*cardHtml;/,

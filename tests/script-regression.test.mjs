@@ -125,6 +125,7 @@ const context = vm.createContext({
 
 vm.runInContext(source, context, { filename: 'script.js' });
 const run = (code) => vm.runInContext(code, context);
+run('restoringApp = false;');
 
 assert.equal(
   run('backgroundPresets.gradient1'),
@@ -347,7 +348,7 @@ assert.equal(
 assert.match(source, /const ImagePersistence\s*=\s*\{/, 'an IndexedDB persistence adapter must exist');
 assert.match(
   source,
-  /await\s+ImagePersistence\.loadAll\(\)[\s\S]*?restoreDraft\(\)/,
+  /await\s+ImagePersistence\.loadAll\(\)[\s\S]*?await initializeDocumentLibrary\(\)/,
   'persisted images must load before the draft is restored',
 );
 
@@ -540,7 +541,7 @@ assert.equal(cornerNodes.length, 0, 'clearing settings must remove all previous 
 
 const savedValues = new Map();
 context.localStorage.setItem = (key, value) => savedValues.set(key, value);
-run(`currentHeaderFooter = cornerSettings; autoSave('正文');`);
+run(`currentHeaderFooter = cornerSettings; saveSettings();`);
 const savedSettings = JSON.parse(savedValues.get('madopic_settings'));
 assert.equal(savedSettings.headerFooter['top-left'].text, '<img src=x onerror=alert(1)>');
 assert.equal(savedSettings.headerFooter['bottom-left'].italic, true);
@@ -727,3 +728,47 @@ await run(`loadMarkdownArchiveParser = async () => { throw new Error('CDN unavai
 assert.equal(downloads.length, 0, 'library failures must not produce an incomplete archive');
 assert.equal(run('isExporting'), false);
 assert.equal(run('document.getElementById("exportMarkdownBtn").disabled'), false);
+
+// Settings commit immediately, independently of content edits, including custom gradients.
+context.localStorage.getItem = key => savedValues.get(key) ?? null;
+const cardStyles = new Map();
+run('posterContent').style.setProperty = (name, value) => cardStyles.set(name, value);
+run(`
+  currentBackground = 'gradient1';
+  currentCardColor = '#ffffff';
+  openBackgroundPanel();
+  backgroundDraft = { background: 'custom', custom: { colorStart: '#123456', colorEnd: '#abcdef', direction: '45deg' }, cardColor: '#fff8dc' };
+  applyBackgroundSettings();
+`);
+let committedSettings = JSON.parse(savedValues.get('madopic_settings'));
+assert.equal(committedSettings.background, 'custom');
+assert.deepEqual(committedSettings.customBackground, { colorStart: '#123456', colorEnd: '#abcdef', direction: '45deg' });
+assert.equal(committedSettings.cardColor, '#fff8dc');
+const committedBackground = run('markdownPoster.style.background');
+run(`openBackgroundPanel(); backgroundDraft.cardColor = '#171717'; applyCardColor('#171717'); closeAllPanels();`);
+assert.equal(cardStyles.get('--background-primary'), '#fff8dc', 'Cancel and Escape must restore the committed card color');
+assert.equal(run('markdownPoster.style.background'), committedBackground);
+assert.equal(JSON.parse(savedValues.get('madopic_settings')).cardColor, '#fff8dc');
+run(`
+  document.getElementById('fontSizeSlider').value = '20';
+  document.getElementById('paddingSlider').value = '36';
+  document.getElementById('widthSlider').value = '720';
+  applyLayoutSettings();
+`);
+committedSettings = JSON.parse(savedValues.get('madopic_settings'));
+assert.equal(committedSettings.fontSize, 20);
+assert.equal(committedSettings.padding, 36);
+assert.equal(committedSettings.width, 720);
+run(`
+  currentFontSize = 18; currentPadding = 24; currentWidth = 640;
+  currentBackground = 'gradient1'; currentCustomBackground = {};
+  currentCardColor = '#ffffff'; restoringApp = true; restoreSettings(); restoringApp = false;
+`);
+assert.equal(run('currentFontSize'), 20);
+assert.equal(run('currentPadding'), 36);
+assert.equal(run('currentWidth'), 720);
+assert.equal(run('markdownPoster.style.background'), committedBackground);
+assert.equal(cardStyles.get('--background-primary'), '#fff8dc');
+run(`applyCardColor('#171717');`);
+assert.equal(cardStyles.get('--text-primary'), '#f5f5f5');
+assert.equal(cardStyles.get('--background-primary'), '#171717');

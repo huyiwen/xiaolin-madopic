@@ -4,6 +4,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="only light">
+    <meta name="darkreader-lock">
     <title>Madopic - Markdown to Picture</title>
     <meta name="description" content="Madopic 是由 XIAOLIN AI LAB 出品的在线 Markdown 转图片工具，支持 Markdown 海报、社交媒体长图、数学公式、Mermaid、ECharts，以及 PNG、PDF、HTML 导出。">
     <meta name="keywords" content="Markdown to picture, Markdown 海报, Markdown 转图片, Madopic, 小红书海报, 朋友圈长图, XIAOLIN AI LAB">
@@ -27,7 +29,7 @@
     <meta name="twitter:title" content="Madopic - Markdown to Picture">
     <meta name="twitter:description" content="Markdown 海报生成工具，支持社交媒体长图、数学公式、Mermaid、ECharts 和多格式导出。">
     <meta name="twitter:image" content="https://madopic.thus.chat/favicon.svg">
-    <link rel="stylesheet" href="style.css?v=20260914-3">
+    <link rel="stylesheet" href="style.css?v=20260914-4">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <!-- KaTeX CSS -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
@@ -80,6 +82,9 @@
         <!-- 顶部工具栏 -->
         <div class="toolbar">
             <div class="toolbar-left">
+                <button class="btn btn-secondary" id="documentsBtn" aria-controls="documentSidebar" aria-expanded="false">
+                    <i class="fas fa-folder-open" aria-hidden="true"></i> 文档
+                </button>
                 <h1><img src="favicon.svg" alt="Madopic" class="app-icon"> Madopic</h1>
                 <span class="subtitle">Markdown to Picture 🎨✨</span>
             </div>
@@ -131,10 +136,25 @@
 
         <!-- 主要内容区域 -->
         <div class="main-content">
+            <aside class="document-sidebar" id="documentSidebar" aria-label="我的文档" hidden>
+                <div class="document-sidebar-heading">
+                    <h2>我的文档 <small id="documentCount">0 篇</small></h2>
+                    <button class="tool-btn" id="closeDocumentsBtn" aria-label="收起文档列表"><i class="fas fa-times" aria-hidden="true"></i></button>
+                </div>
+                <button class="btn btn-secondary" id="newDocumentBtn" disabled><i class="fas fa-plus" aria-hidden="true"></i> 新建文档</button>
+                <label for="documentName">当前文档名称</label>
+                <input id="documentName" type="text" maxlength="80" placeholder="留空使用正文标题" disabled>
+                <nav class="document-list" id="documentList" aria-label="已保存的文档"></nav>
+                <p class="document-library-hint">输入即保存到当前浏览器。点击文档可切换加载。</p>
+            </aside>
             <!-- 左侧编辑器 -->
             <div class="editor-panel">
                 <div class="panel-header">
-                    <h3><i class="fab fa-markdown"></i> Markdown</h3>
+                    <div class="editor-heading">
+                        <h3><i class="fab fa-markdown"></i> Markdown</h3>
+                        <span class="document-save-status" id="documentSaveStatus" role="status">正在加载文档…</span>
+                        <button class="tool-btn" id="retryDocumentSave" hidden>重试保存</button>
+                    </div>
                     <div class="editor-tools">
                         <button class="tool-btn" data-action="bold" title="粗体">
                             <i class="fas fa-bold"></i>
@@ -158,34 +178,38 @@
                             <i class="fas fa-file-alt" aria-hidden="true"></i>
                         </button>
                         <div class="tool-separator"></div>
-                        <button class="tool-btn" data-action="flowchart" title="插入流程图">
-                            <i class="fas fa-project-diagram"></i>
-                        </button>
-                        <button class="tool-btn" data-action="sequence" title="插入序列图">
-                            <i class="fas fa-exchange-alt"></i>
-                        </button>
-                        <button class="tool-btn" data-action="gantt" title="插入甘特图">
-                            <i class="fas fa-chart-gantt"></i>
-                        </button>
-                        <button class="tool-btn" data-action="pie" title="插入饼图">
-                            <i class="fas fa-chart-pie"></i>
-                        </button>
-                        <button class="tool-btn" data-action="echarts" title="插入ECharts图表">
-                            <i class="fas fa-chart-bar"></i>
-                        </button>
-                        <div class="tool-separator"></div>
-                        <button class="tool-btn" data-action="einstein" title="插入质能守恒公式">
-                            <i class="fas fa-atom"></i>
-                        </button>
-                        <button class="tool-btn" data-action="math" title="插入数学公式">
-                            <i class="fas fa-square-root-alt"></i>
-                        </button>
-                        <button class="tool-btn" data-action="physics" title="插入物理公式">
-                            <i class="fas fa-flask"></i>
-                        </button>
-                        <button class="tool-btn" data-action="chemistry" title="插入化学公式">
-                            <i class="fas fa-vial"></i>
-                        </button>
+                        <details class="template-menu" id="insertTemplates">
+                            <summary class="tool-btn" aria-label="图表与公式"><i class="fas fa-shapes" aria-hidden="true"></i> 图表与公式 <i class="fas fa-chevron-down" aria-hidden="true"></i></summary>
+                            <div class="template-menu-items" role="group" aria-label="插入图表或公式">
+                                <button class="tool-btn" data-action="flowchart" title="插入流程图">
+                                    <i class="fas fa-project-diagram" aria-hidden="true"></i> <span>插入流程图</span>
+                                </button>
+                                <button class="tool-btn" data-action="sequence" title="插入序列图">
+                                    <i class="fas fa-exchange-alt" aria-hidden="true"></i> <span>插入序列图</span>
+                                </button>
+                                <button class="tool-btn" data-action="gantt" title="插入甘特图">
+                                    <i class="fas fa-chart-gantt" aria-hidden="true"></i> <span>插入甘特图</span>
+                                </button>
+                                <button class="tool-btn" data-action="pie" title="插入饼图">
+                                    <i class="fas fa-chart-pie" aria-hidden="true"></i> <span>插入饼图</span>
+                                </button>
+                                <button class="tool-btn" data-action="echarts" title="插入ECharts图表">
+                                    <i class="fas fa-chart-bar" aria-hidden="true"></i> <span>插入ECharts图表</span>
+                                </button>
+                                <button class="tool-btn" data-action="einstein" title="插入质能守恒公式">
+                                    <i class="fas fa-atom" aria-hidden="true"></i> <span>插入质能守恒公式</span>
+                                </button>
+                                <button class="tool-btn" data-action="math" title="插入数学公式">
+                                    <i class="fas fa-square-root-alt" aria-hidden="true"></i> <span>插入数学公式</span>
+                                </button>
+                                <button class="tool-btn" data-action="physics" title="插入物理公式">
+                                    <i class="fas fa-flask" aria-hidden="true"></i> <span>插入物理公式</span>
+                                </button>
+                                <button class="tool-btn" data-action="chemistry" title="插入化学公式">
+                                    <i class="fas fa-vial" aria-hidden="true"></i> <span>插入化学公式</span>
+                                </button>
+                            </div>
+                        </details>
                         <div class="tool-separator"></div>
                         <button class="tool-btn" data-action="card" title="插入卡片">
                             <i class="fas fa-id-card"></i>
@@ -202,7 +226,7 @@
                 <input type="file" id="imageInput" accept="image/*" style="display: none;">
                 <div class="editor-with-lines">
                     <pre class="line-numbers" aria-hidden="true"></pre>
-                    <textarea id="markdownInput" placeholder="在这里输入你的 Markdown 内容..."># Madopic
+                    <textarea id="markdownInput" placeholder="在这里输入你的 Markdown 内容..." readonly># Madopic
 
 > Madopic，精美的 Markdown 转图片工具 🎨
 
@@ -272,6 +296,20 @@
                 <h3><i class="fas fa-palette"></i> 背景设置</h3>
 
                 <div class="setting-section">
+                    <h4>正文卡片底色</h4>
+                    <p class="setting-hint">仅调整海报正文区域，同步到 PNG / PDF，不跟随系统配色。</p>
+                    <div class="card-color-presets" role="group" aria-label="正文底色预设">
+                        <button type="button" class="card-color-preset card-color-white" data-card-color="#ffffff" aria-pressed="true">白色</button>
+                        <button type="button" class="card-color-preset card-color-black" data-card-color="#171717" aria-pressed="false">黑色</button>
+                        <button type="button" class="card-color-preset card-color-yellow" data-card-color="#fff8dc" aria-pressed="false">淡黄色</button>
+                        <button type="button" class="card-color-preset card-color-green" data-card-color="#eef7ed" aria-pressed="false">淡绿色</button>
+                        <button type="button" class="card-color-preset card-color-blue" data-card-color="#edf4ff" aria-pressed="false">淡蓝色</button>
+                    </div>
+                    <label class="card-color-picker" for="cardColor">自定义底色 <input type="color" id="cardColor" value="#ffffff"></label>
+                </div>
+
+                <div class="setting-section">
+                    <h4>画布背景</h4>
                     <div class="option-group">
                         <label>预设背景：</label>
                         <div class="preset-backgrounds">
@@ -376,9 +414,11 @@
 
         <!-- 遮罩层 -->
         <div class="overlay" id="overlay"></div>
+        <button class="document-sidebar-backdrop" id="documentSidebarBackdrop" aria-label="关闭文档列表" hidden></button>
     </div>
 
-    <script src="script.js?v=20260914-6"></script>
+    <script src="documents.js?v=20260914-1"></script>
+    <script src="script.js?v=20260914-7"></script>
     <noscript>Madopic 是由 XIAOLIN AI LAB 出品的 Markdown to picture 在线工具，可将 Markdown 内容制作成图片海报、社交媒体长图、知识卡片、技术文档图和公式图表海报。</noscript>
 </body>
 

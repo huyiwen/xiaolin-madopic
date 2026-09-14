@@ -52,6 +52,11 @@ let currentWidth = AppState.width;
 let currentMode = AppState.mode;
 let fixedHeights = AppState.fixedHeights;
 let isExporting = false;
+let restoringApp = true;
+let documentLibrary = null;
+let currentCustomBackground = { colorStart: '#a755f7', colorEnd: '#6c23aa', direction: '135deg' };
+let backgroundDraft = null;
+let currentCardColor = '#ffffff';
 
 const HEADER_FOOTER_CORNERS = {
     'top-left': '左上角 · 页眉',
@@ -289,23 +294,38 @@ const undoRedoManager = new UndoRedoManager();
 const AUTOSAVE_KEY = 'madopic_draft';
 const AUTOSAVE_SETTINGS_KEY = 'madopic_settings';
 
-function autoSave(content) {
+function saveSettings() {
+    if (restoringApp) return true;
     try {
-        localStorage.setItem(AUTOSAVE_KEY, content);
         localStorage.setItem(AUTOSAVE_SETTINGS_KEY, JSON.stringify({
             background: currentBackground,
+            customBackground: currentCustomBackground,
+            cardColor: currentCardColor,
             fontSize: typeof currentFontSize !== 'undefined' ? currentFontSize : 18,
             width: typeof currentWidth !== 'undefined' ? currentWidth : 640,
             padding: typeof currentPadding !== 'undefined' ? currentPadding : 24,
             mode: typeof currentMode !== 'undefined' ? currentMode : 'free',
             headerFooter: currentHeaderFooter
         }));
+        return true;
     } catch (e) {
-        console.warn('自动保存失败:', e);
-        // 用户友好提示：可能是存储空间已满
-        if (typeof showNotification === 'function') {
-            showNotification('自动保存失败，可能是浏览器存储空间已满', 'warning');
-        }
+        console.warn('设置保存失败:', e);
+        showNotification('设置未能保存，请检查浏览器存储空间', 'warning');
+        return false;
+    }
+}
+
+function autoSave(content) {
+    if (restoringApp) return;
+    if (documentLibrary?.active) {
+        documentLibrary.save(content).catch(() => {});
+        return;
+    }
+    // IndexedDB 不可用时保留旧草稿，避免正文丢失；恢复后再迁移到文档库。
+    try {
+        localStorage.setItem(AUTOSAVE_KEY, content);
+    } catch (error) {
+        showNotification('正文未能保存，请及时导出 Markdown 备份', 'warning');
     }
 }
 
@@ -951,7 +971,7 @@ let hasShownImagePersistenceWarning = false;
 
 const ImagePersistence = {
     databaseName: 'madopic',
-    databaseVersion: 1,
+    databaseVersion: 2,
     storeName: 'images',
     databasePromise: null,
 
@@ -968,10 +988,16 @@ const ImagePersistence = {
                 if (!database.objectStoreNames.contains(this.storeName)) {
                     database.createObjectStore(this.storeName, { keyPath: 'id' });
                 }
+                if (!database.objectStoreNames.contains('documents')) {
+                    database.createObjectStore('documents', { keyPath: 'id' });
+                }
             };
             request.onsuccess = () => {
                 const database = request.result;
-                database.onversionchange = () => database.close();
+                database.onversionchange = () => {
+                    database.close();
+                    this.databasePromise = null;
+                };
                 resolve(database);
             };
             request.onerror = () => reject(request.error || new Error('Unable to open image storage'));
@@ -1116,6 +1142,7 @@ async function bootstrapApp() {
     initializeApp();
     setupEventListeners();
     await initOptimizations();
+    restoringApp = false;
     await updatePreview();
 }
 
@@ -1143,6 +1170,7 @@ function initializeApp() {
 
     // 设置初始背景
     applyBackground(backgroundPresets[currentBackground]);
+    applyCardColor(currentCardColor);
 
     // 应用初始设置
     applyFontSize(currentFontSize);
@@ -1164,6 +1192,7 @@ function setupEventListeners() {
     // Markdown 输入监听
     // 更平滑的输入预览：稍延长防抖并在输入结束时仅渲染一次
     markdownInput.addEventListener('input', debounce(updatePreview, 250));
+    markdownInput.addEventListener('input', () => autoSave(markdownInput.value));
     markdownInput.addEventListener('input', updateLineNumbers);
     markdownInput.addEventListener('scroll', syncLineNumbersScroll);
 
@@ -1195,6 +1224,7 @@ function setupEventListeners() {
     // 导出功能
     setupExportButtons();
     setupModeButtons();
+    setupDocumentSidebar();
 
     // 背景预设选择
     setupBackgroundPresets();
@@ -1288,6 +1318,7 @@ function setMode(mode) {
     }
     // 切换模式后同时更新画布比例和分页内容。
     applyPreviewModeFrame();
+    saveSettings();
     return updatePreview();
 }
 
@@ -1342,7 +1373,18 @@ function setupToolbarButtons() {
         button.addEventListener('click', function () {
             const action = this.getAttribute('data-action');
             handleToolbarAction(action);
+            this.closest('details')?.removeAttribute('open');
         });
+    });
+    const templates = document.getElementById('insertTemplates');
+    document.addEventListener('click', event => {
+        if (!templates.contains(event.target)) templates.open = false;
+    });
+    templates.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+            templates.open = false;
+            templates.querySelector('summary').focus();
+        }
     });
 }
 
@@ -1653,12 +1695,24 @@ function updateZoomDisplay() {
 
 // 背景设置面板
 function openBackgroundPanel() {
+    backgroundDraft = { background: currentBackground, custom: { ...currentCustomBackground }, cardColor: currentCardColor };
+    document.getElementById('cardColor').value = currentCardColor;
+    updateCardColorPresets(currentCardColor);
+    document.getElementById('colorStart').value = currentCustomBackground.colorStart;
+    document.getElementById('colorEnd').value = currentCustomBackground.colorEnd;
+    document.getElementById('gradientDirection').value = currentCustomBackground.direction;
+    document.querySelectorAll('.bg-preset').forEach(preset => {
+        preset.classList.toggle('active', preset.dataset.bg === currentBackground);
+    });
     backgroundPanel.classList.add('active');
     overlay.classList.add('active');
     document.body.style.overflow = 'hidden';
 }
 
 function closeBackgroundPanel() {
+    backgroundDraft = null;
+    applyBackground(getBackgroundCSS());
+    applyCardColor(currentCardColor);
     backgroundPanel.classList.remove('active');
     overlay.classList.remove('active');
     document.body.style.overflow = '';
@@ -1666,12 +1720,19 @@ function closeBackgroundPanel() {
 
 // 文字布局设置面板
 function openLayoutPanel() {
+    for (const [name, value] of [['fontSize', currentFontSize], ['padding', currentPadding], ['width', currentWidth]]) {
+        document.getElementById(`${name}Slider`).value = value;
+        document.getElementById(`${name}Value`).textContent = `${value}px`;
+    }
     layoutPanel.classList.add('active');
     overlay.classList.add('active');
     document.body.style.overflow = 'hidden';
 }
 
 function closeLayoutPanel() {
+    applyFontSize(currentFontSize);
+    applyPadding(currentPadding);
+    applyWidth(currentWidth);
     layoutPanel.classList.remove('active');
     overlay.classList.remove('active');
     document.body.style.overflow = '';
@@ -1679,8 +1740,8 @@ function closeLayoutPanel() {
 
 // 关闭所有面板
 function closeAllPanels() {
-    backgroundPanel.classList.remove('active');
-    layoutPanel.classList.remove('active');
+    closeBackgroundPanel();
+    closeLayoutPanel();
     closeHeaderFooterPanel();
     overlay.classList.remove('active');
     document.body.style.overflow = '';
@@ -1759,7 +1820,7 @@ function setupHeaderFooterPanel() {
     document.getElementById('applyHeaderFooter').addEventListener('click', () => {
         currentHeaderFooter = normalizeHeaderFooterSettings(headerFooterDraft);
         closeHeaderFooterPanel();
-        autoSave(markdownInput.value);
+        saveSettings();
     });
     headerFooterPanel.addEventListener('keydown', event => {
         if (event.key !== 'Tab') return;
@@ -1810,7 +1871,9 @@ function setupBackgroundPresets() {
             document.querySelectorAll('.bg-preset').forEach(p => p.classList.remove('active'));
             // 添加选中状态
             this.classList.add('active');
-            currentBackground = this.getAttribute('data-bg');
+            if (!backgroundDraft) return;
+            backgroundDraft.background = this.getAttribute('data-bg');
+            applyBackground(getBackgroundCSS(backgroundDraft.background, backgroundDraft.custom));
         });
     });
 }
@@ -1821,31 +1884,70 @@ function setupColorInputs() {
     const gradientDirection = document.getElementById('gradientDirection');
 
     [colorStart, colorEnd, gradientDirection].forEach(input => {
-        input.addEventListener('change', function () {
+        input.addEventListener('input', function () {
+            if (!backgroundDraft) return;
             // 取消预设选择
             document.querySelectorAll('.bg-preset').forEach(p => p.classList.remove('active'));
-            currentBackground = 'custom';
+            backgroundDraft.background = 'custom';
+            backgroundDraft.custom = { colorStart: colorStart.value, colorEnd: colorEnd.value, direction: gradientDirection.value };
+            applyBackground(getBackgroundCSS('custom', backgroundDraft.custom));
         });
+    });
+    const chooseCardColor = color => {
+        if (!backgroundDraft) return;
+        backgroundDraft.cardColor = color;
+        document.getElementById('cardColor').value = color;
+        applyCardColor(color);
+        updateCardColorPresets(color);
+    };
+    document.getElementById('cardColor').addEventListener('input', event => chooseCardColor(event.target.value));
+    document.querySelectorAll('[data-card-color]').forEach(button => {
+        button.addEventListener('click', () => chooseCardColor(button.dataset.cardColor));
     });
 }
 
+function updateCardColorPresets(color) {
+    document.querySelectorAll('[data-card-color]').forEach(button => {
+        button.setAttribute('aria-pressed', String(button.dataset.cardColor.toLowerCase() === color.toLowerCase()));
+    });
+}
+
+function applyCardColor(color) {
+    if (!/^#[0-9a-f]{6}$/i.test(color)) return;
+    const rgb = [1, 3, 5].map(index => parseInt(color.slice(index, index + 2), 16) / 255);
+    const linear = rgb.map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+    const dark = linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722 < 0.18;
+    const variables = {
+        '--background-primary': color,
+        '--background-secondary': dark ? '#242424' : '#fafafa',
+        '--background-gray': dark ? '#303030' : '#fafafa',
+        '--background-light': dark ? '#242424' : '#fafafa',
+        '--text-primary': dark ? '#f5f5f5' : '#0f0f0f',
+        '--text-secondary': dark ? '#e5e5e5' : '#525252',
+        '--text-light': dark ? '#e5e5e5' : '#525252',
+        '--text-muted': dark ? '#cccccc' : '#878787',
+        '--primary-color': dark ? '#b8b8ff' : '#5b5bd6',
+        '--primary-hover': dark ? '#d0d0ff' : '#4a4ac4',
+        '--border-color': dark ? '#555555' : '#e6e6e6'
+    };
+    Object.entries(variables).forEach(([name, value]) => posterContent.style.setProperty(name, value));
+    posterContent.style.color = variables['--text-light'];
+}
+
+function getBackgroundCSS(background = currentBackground, custom = currentCustomBackground) {
+    return background === 'custom'
+        ? `linear-gradient(${custom.direction}, ${custom.colorStart} 0%, ${custom.colorEnd} 100%)`
+        : backgroundPresets[background] || backgroundPresets.gradient1;
+}
+
 function applyBackgroundSettings() {
-    // 应用背景设置
-    let backgroundCSS;
-    if (currentBackground === 'custom') {
-        const colorStart = document.getElementById('colorStart').value;
-        const colorEnd = document.getElementById('colorEnd').value;
-        const direction = document.getElementById('gradientDirection').value;
-        backgroundCSS = `linear-gradient(${direction}, ${colorStart} 0%, ${colorEnd} 100%)`;
-    } else {
-        backgroundCSS = backgroundPresets[currentBackground];
+    if (backgroundDraft) {
+        currentBackground = backgroundDraft.background;
+        currentCustomBackground = { ...backgroundDraft.custom };
+        currentCardColor = backgroundDraft.cardColor;
     }
-    applyBackground(backgroundCSS);
-
     closeBackgroundPanel();
-
-    // 显示成功提示
-    showNotification('背景设置已更新！', 'success');
+    if (saveSettings()) showNotification('背景设置已更新并保存！', 'success');
 }
 
 function applyLayoutSettings() {
@@ -1864,7 +1966,7 @@ function applyLayoutSettings() {
     closeLayoutPanel();
 
     // 显示成功提示
-    showNotification('文字布局设置已更新！', 'success');
+    if (saveSettings()) showNotification('文字布局设置已更新并保存！', 'success');
 }
 
 function applyBackground(backgroundCSS) {
@@ -1949,6 +2051,7 @@ function createExportTemplate() {
         left: '-9999px',
         margin: '0',
         width: `${getUnscaledWidth(markdownPoster)}px`,
+        maxWidth: 'none',
         padding: mpComputed.padding,
         boxSizing: 'border-box',
         background: markdownPoster.style.background || mpComputed.background,
@@ -3062,7 +3165,7 @@ function handlePreviewPageKeydown(event) {
     // 保留文字光标、表单控件和弹窗中的方向键操作。
     const target = event.target;
     if (overlay.classList.contains('active') || target?.isContentEditable
-        || target?.closest?.('input, textarea, select, [role="textbox"], [role="slider"], [role="combobox"], [role="spinbutton"]')) return;
+        || target?.closest?.('input, textarea, select, #documentSidebar, [role="textbox"], [role="slider"], [role="combobox"], [role="spinbutton"]')) return;
     event.preventDefault();
     return changePreviewPage(event.key === 'ArrowLeft' ? -1 : 1);
 }
@@ -3626,6 +3729,7 @@ window.MadopicApp = {
     updatePreview,
     exportToPNG,
     exportToPDF,
+    exportToMarkdown,
     applyBackground,
     MarkdownHelper,
     showNotification,
@@ -3811,32 +3915,128 @@ function setupHamburgerMenu() {
     });
 }
 
-// ===== 草稿恢复 =====
-function restoreDraft() {
+// ===== 文档侧边栏 =====
+function setDocumentSidebarOpen(open) {
+    document.getElementById('documentSidebar').hidden = !open;
+    document.getElementById('documentsBtn').setAttribute('aria-expanded', String(open));
+    document.getElementById('documentSidebarBackdrop').hidden = !open || window.innerWidth > 1200;
+}
+
+function renderDocumentList() {
+    if (!documentLibrary) return;
+    const list = document.getElementById('documentList');
+    list.replaceChildren();
+    for (const record of documentLibrary.list()) {
+        const button = document.createElement('button');
+        button.className = 'document-item';
+        button.type = 'button';
+        button.dataset.documentId = record.id;
+        button.setAttribute('aria-current', String(record.id === documentLibrary.activeId));
+        const title = document.createElement('span');
+        title.className = 'document-item-title';
+        title.textContent = documentLibrary.title(record);
+        const date = document.createElement('small');
+        date.textContent = new Date(record.updatedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+        button.append(title, date);
+        list.appendChild(button);
+    }
+    document.getElementById('documentCount').textContent = `${documentLibrary.records.size} 篇`;
+    if (documentLibrary.active) document.getElementById('documentName').placeholder = documentLibrary.title(documentLibrary.active);
+}
+
+function setupDocumentSidebar() {
+    const sidebar = document.getElementById('documentSidebar');
+    document.getElementById('documentsBtn').addEventListener('click', () => setDocumentSidebarOpen(sidebar.hidden));
+    document.getElementById('closeDocumentsBtn').addEventListener('click', () => setDocumentSidebarOpen(false));
+    document.getElementById('documentSidebarBackdrop').addEventListener('click', () => setDocumentSidebarOpen(false));
+    const perform = async action => {
+        if (!documentLibrary) return;
+        try {
+            // 切换之前同步输入，覆盖尚未完成的预览去抖。
+            await documentLibrary.save(markdownInput.value);
+            await action();
+            if (window.innerWidth <= 1200) setDocumentSidebarOpen(false);
+        } catch (error) {
+            showNotification('文档未能保存，已保留当前内容，请重试或导出 Markdown', 'error');
+        }
+    };
+    document.getElementById('newDocumentBtn').addEventListener('click', () => perform(() => documentLibrary.create()));
+    document.getElementById('documentList').addEventListener('click', event => {
+        const button = event.target.closest('[data-document-id]');
+        if (button) perform(() => documentLibrary.select(button.dataset.documentId));
+    });
+    document.getElementById('documentName').addEventListener('input', event => {
+        documentLibrary?.save(markdownInput.value, event.target.value.trim().slice(0, 80)).catch(() => {});
+    });
+    document.getElementById('retryDocumentSave').addEventListener('click', () => perform(() => documentLibrary.flush()));
+    window.addEventListener('pagehide', () => autoSave(markdownInput.value));
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') autoSave(markdownInput.value);
+    });
+    window.addEventListener('resize', () => setDocumentSidebarOpen(!sidebar.hidden));
+}
+
+async function initializeDocumentLibrary() {
     const draft = loadDraft();
+    try {
+        const database = await ImagePersistence.open();
+        documentLibrary = new MadopicDocumentLibrary(database, {
+            onChange: renderDocumentList,
+            onStatus: text => {
+                document.getElementById('documentSaveStatus').textContent = text;
+                document.getElementById('retryDocumentSave').hidden = !text.startsWith('保存失败');
+            },
+            onLoad: record => {
+                markdownInput.value = record.content;
+                currentPreviewPage = 0;
+                undoRedoManager.history = [];
+                undoRedoManager.index = -1;
+                undoRedoManager.push(record.content);
+                document.getElementById('documentName').value = record.name;
+                try { localStorage.setItem('madopic_active_document', record.id); } catch (_) { }
+                updatePreview();
+            }
+        });
+        let activeId;
+        try { activeId = localStorage.getItem('madopic_active_document'); } catch (_) { }
+        await documentLibrary.initialize(draft ?? markdownInput.value, activeId, draft !== null);
+        // 只有数据库事务成功后才删除旧草稿；空文档也会完整迁移。
+        try { localStorage.removeItem(AUTOSAVE_KEY); } catch (_) { }
+        document.getElementById('newDocumentBtn').disabled = false;
+        document.getElementById('documentName').disabled = false;
+        setDocumentSidebarOpen(window.innerWidth > 1200);
+    } catch (error) {
+        documentLibrary = null;
+        if (draft !== null) markdownInput.value = draft;
+        document.getElementById('documentSaveStatus').textContent = '文档库不可用，使用本地草稿';
+        showNotification('浏览器文档库暂不可用，正文将保留为本地草稿', 'warning');
+    } finally {
+        markdownInput.readOnly = false;
+    }
+}
+
+// ===== 设置恢复 =====
+function restoreSettings() {
     const settings = loadSettings();
     let shouldRefreshPreview = false;
-
-    if (draft && markdownInput) {
-        // 只有当草稿内容与默认内容不同时才恢复
-        const defaultContent = markdownInput.value;
-        if (draft !== defaultContent && draft.trim().length > 0) {
-            markdownInput.value = draft;
-            undoRedoManager.push(draft);
-            shouldRefreshPreview = true;
-        }
-    }
 
     // 恢复设置
     if (settings) {
         currentHeaderFooter = normalizeHeaderFooterSettings(settings.headerFooter);
         renderHeaderFooter(markdownPoster);
-        if (settings.background) {
+        if (settings.background === 'custom' || Object.hasOwn(backgroundPresets, settings.background)) {
             currentBackground = settings.background;
-            if (backgroundPresets[currentBackground]) {
-                applyBackground(backgroundPresets[currentBackground]);
-            }
         }
+        const custom = settings.customBackground || {};
+        for (const color of ['colorStart', 'colorEnd']) {
+            if (/^#[0-9a-f]{6}$/i.test(custom[color])) currentCustomBackground[color] = custom[color];
+        }
+        if (['135deg', '45deg', '0deg', '90deg', '180deg', '270deg'].includes(custom.direction)) {
+            currentCustomBackground.direction = custom.direction;
+        }
+        applyBackground(getBackgroundCSS());
+        if (/^#[0-9a-f]{6}$/i.test(settings.cardColor)) currentCardColor = settings.cardColor;
+        applyCardColor(currentCardColor);
         if (Number.isFinite(settings.fontSize)) {
             currentFontSize = settings.fontSize;
             const fontSizeSlider = document.getElementById('fontSizeSlider');
@@ -3885,8 +4085,9 @@ async function initOptimizations() {
         console.warn('本地图片存储不可用，将使用内存模式:', error);
     }
 
-    // 恢复草稿
-    restoreDraft();
+    // 设置保持全局，正文从文档库恢复（旧版本 localStorage 草稿自动迁移）。
+    restoreSettings();
+    await initializeDocumentLibrary();
 
     // 初始化撤销栈
     if (markdownInput) {
