@@ -608,11 +608,15 @@ await handlePageKey(pageKey());
 assert.equal(run('currentPreviewPage'), 1, 'right arrow must stop at the last page');
 await handlePageKey(pageKey({ key: 'ArrowLeft' }));
 assert.equal(run('currentPreviewPage'), 0);
+await handlePageKey(pageKey({ key: 'ArrowDown' }));
+assert.equal(run('currentPreviewPage'), 1, 'down arrow must advance the preview');
+await handlePageKey(pageKey({ key: 'ArrowUp' }));
+assert.equal(run('currentPreviewPage'), 0, 'up arrow must return to the previous page');
 for (const overrides of [
   { target: { closest() { return {}; } } },
   { target: { isContentEditable: true } },
   { ctrlKey: true }, { metaKey: true }, { altKey: true }, { shiftKey: true },
-  { isComposing: true }, { defaultPrevented: true }, { key: 'ArrowDown' },
+  { isComposing: true }, { defaultPrevented: true }, { key: 'Enter' },
 ]) {
   const count = preventedKeys;
   await handlePageKey(pageKey(overrides));
@@ -627,6 +631,54 @@ modalOverlay.classList.contains = () => false;
 run('currentMode = "free";');
 await handlePageKey(pageKey());
 assert.equal(run('currentPreviewPage'), 0, 'free mode must keep its arrow key behavior');
+
+// Wheel navigation handles trackpad inertia, delta units and normal scrolling exclusions.
+const handlePageWheel = run('handlePreviewPageWheel');
+let preventedWheels = 0;
+const wheel = overrides => ({
+  deltaY: 100, deltaX: 0, deltaMode: 0, timeStamp: 1000,
+  target: { closest() { return null; } },
+  preventDefault() { preventedWheels++; },
+  ...overrides,
+});
+run(`currentMode = 'xhs'; currentPreviewPage = 0; markdownInput.value = ${JSON.stringify(`甲\n${pageBreak}\n乙\n${pageBreak}\n丙`)}; updatePreviewPagination(markdownInput.value);`);
+await handlePageWheel(wheel());
+assert.equal(run('currentPreviewPage'), 1);
+for (const timeStamp of [1050, 1150, 1250, 1350]) await handlePageWheel(wheel({ timeStamp }));
+assert.equal(run('currentPreviewPage'), 1, 'inertia from the same gesture must not skip pages');
+await handlePageWheel(wheel({ timeStamp: 1600 }));
+assert.equal(run('currentPreviewPage'), 2, 'a new gesture must advance the preview');
+await handlePageWheel(wheel({ timeStamp: 1850 }));
+assert.equal(run('currentPreviewPage'), 2, 'wheel navigation must stop at the last page');
+await handlePageWheel(wheel({ deltaY: -100, timeStamp: 1900 }));
+assert.equal(run('currentPreviewPage'), 1, 'reversing the wheel must go back immediately');
+await handlePageWheel(wheel({ deltaY: -10, timeStamp: 2200 }));
+assert.equal(run('currentPreviewPage'), 1, 'small touchpad deltas should accumulate');
+await handlePageWheel(wheel({ deltaY: -30, timeStamp: 2250 }));
+assert.equal(run('currentPreviewPage'), 0);
+await handlePageWheel(wheel({ deltaY: 3, deltaMode: 1, timeStamp: 2500 }));
+assert.equal(run('currentPreviewPage'), 1, 'line-based wheels should also turn a page');
+await handlePageWheel(wheel({ deltaY: 1, deltaMode: 2, timeStamp: 2800 }));
+assert.equal(run('currentPreviewPage'), 2, 'page-based wheels should also turn a page');
+for (const overrides of [
+  { ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true },
+  { defaultPrevented: true }, { deltaY: 0 }, { deltaX: 200 },
+  { target: { closest() { return {}; } } },
+]) {
+  const count = preventedWheels;
+  await handlePageWheel(wheel(overrides));
+  assert.equal(preventedWheels, count, 'modified wheels and controls must keep native behavior');
+}
+for (const mode of ['free', 'pyq']) {
+  run(`currentMode = '${mode}';`);
+  const count = preventedWheels;
+  await handlePageWheel(wheel());
+  assert.equal(preventedWheels, count, 'continuous modes must keep native scrolling');
+}
+run('currentMode = "xhs"; updatePreviewPagination("单页");');
+const wheelCount = preventedWheels;
+await handlePageWheel(wheel());
+assert.equal(preventedWheels, wheelCount, 'a single page must retain native scrolling');
 
 // Markdown archives use real Markdown source offsets and a real ZIP writer.
 context.JSZip = JSZip;

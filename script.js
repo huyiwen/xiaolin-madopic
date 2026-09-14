@@ -1088,6 +1088,7 @@ let previewRenderVersion = 0;
 let previewRenderPromise = Promise.resolve();
 let previewPages = [''];
 let currentPreviewPage = 0;
+let previewWheelGesture = { time: -Infinity, direction: 0, delta: 0, paged: false };
 
 // 分页符必须独占一行；代码块里的示例保持原样，不参与分页。
 function splitMarkdownPages(markdown) {
@@ -1204,6 +1205,7 @@ function setupEventListeners() {
     document.getElementById('zoomOut').addEventListener('click', zoomOut);
     prevPageButton.addEventListener('click', () => changePreviewPage(-1));
     nextPageButton.addEventListener('click', () => changePreviewPage(1));
+    document.getElementById('previewContainer').addEventListener('wheel', handlePreviewPageWheel, { passive: false });
 
     // 背景设置面板
     document.getElementById('backgroundBtn').addEventListener('click', openBackgroundPanel);
@@ -1241,26 +1243,47 @@ function setupEventListeners() {
 
 // 设置导出按钮事件
 function setupExportButtons() {
-    const exportPngBtn = document.getElementById('exportPngBtn');
-    const exportPdfBtn = document.getElementById('exportPdfBtn');
-    const exportHtmlBtn = document.getElementById('exportHtmlBtn');
-    const exportMarkdownBtn = document.getElementById('exportMarkdownBtn');
-
-    if (exportPngBtn) {
-        exportPngBtn.addEventListener('click', exportToPNG);
-    }
-
-    if (exportPdfBtn) {
-        exportPdfBtn.addEventListener('click', exportToPDF);
-    }
-
-    if (exportHtmlBtn) {
-        exportHtmlBtn.addEventListener('click', exportToHTML);
-    }
-    if (exportMarkdownBtn) {
-        exportMarkdownBtn.addEventListener('click', exportToMarkdown);
-    }
+    const menu = document.getElementById('exportMenu');
+    const toggle = document.getElementById('exportMenuBtn');
+    const items = document.getElementById('exportMenuItems');
+    const actions = { exportPngBtn: exportToPNG, exportPdfBtn: exportToPDF, exportHtmlBtn: exportToHTML, exportMarkdownBtn: exportToMarkdown };
+    Object.entries(actions).forEach(([id, action]) => {
+        document.getElementById(id).addEventListener('click', () => {
+            setExportMenuOpen(false);
+            toggle.focus();
+            document.getElementById('toolbarRight').classList.remove('mobile-open');
+            document.getElementById('hamburgerBtn').classList.remove('active');
+            action();
+        });
+    });
+    toggle.addEventListener('click', () => setExportMenuOpen(items.hidden));
+    document.addEventListener('click', event => {
+        if (!menu.contains(event.target)) setExportMenuOpen(false);
+    });
+    menu.addEventListener('focusout', event => {
+        if (event.relatedTarget && !menu.contains(event.relatedTarget)) setExportMenuOpen(false);
+    });
+    menu.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            setExportMenuOpen(false);
+            toggle.focus();
+        } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            setExportMenuOpen(true);
+            const buttons = [...items.querySelectorAll('button:not(:disabled)')];
+            const current = buttons.indexOf(document.activeElement);
+            const next = event.key === 'ArrowDown' ? current + 1 : current < 0 ? buttons.length - 1 : current - 1;
+            buttons[(next + buttons.length) % buttons.length]?.focus();
+        }
+    });
     updateExportButtons();
+}
+
+function setExportMenuOpen(open) {
+    document.getElementById('exportMenuItems').hidden = !open;
+    document.getElementById('exportMenuBtn').setAttribute('aria-expanded', String(open));
 }
 
 function updateExportButtons() {
@@ -1278,6 +1301,9 @@ function updateExportButtons() {
         button.title = title;
         button.setAttribute('aria-busy', String(isExporting));
     });
+    const toggle = document.getElementById('exportMenuBtn');
+    toggle.disabled = isExporting;
+    toggle.setAttribute('aria-busy', String(isExporting));
 }
 
 function beginExport() {
@@ -3158,16 +3184,40 @@ function getNotificationColor(type) {
     return colors[type] || colors.info;
 }
 
-// ===== 键盘快捷键 =====
+// ===== 预览翻页与键盘快捷键 =====
+function isPreviewNavigationBlocked(event) {
+    return currentMode !== 'xhs' || event.defaultPrevented || event.isComposing
+        || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey
+        || overlay.classList.contains('active') || event.target?.isContentEditable
+        || event.target?.closest?.('input, textarea, select, #documentSidebar, #exportMenu, #insertTemplates, [role="textbox"], [role="slider"], [role="combobox"], [role="spinbutton"]');
+}
+
 function handlePreviewPageKeydown(event) {
-    if (currentMode !== 'xhs' || !['ArrowLeft', 'ArrowRight'].includes(event.key)
-        || event.defaultPrevented || event.isComposing || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)
+        || isPreviewNavigationBlocked(event)) return;
     // 保留文字光标、表单控件和弹窗中的方向键操作。
-    const target = event.target;
-    if (overlay.classList.contains('active') || target?.isContentEditable
-        || target?.closest?.('input, textarea, select, #documentSidebar, [role="textbox"], [role="slider"], [role="combobox"], [role="spinbutton"]')) return;
     event.preventDefault();
-    return changePreviewPage(event.key === 'ArrowLeft' ? -1 : 1);
+    return changePreviewPage(['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 1);
+}
+
+function handlePreviewPageWheel(event) {
+    if (isPreviewNavigationBlocked(event) || previewPages.length <= 1
+        || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+    event.preventDefault();
+    // 一次触控板手势只翻一页，忽略其后的惯性事件；停顿或反向滚动后可继续翻页。
+    const direction = Math.sign(event.deltaY);
+    const time = event.timeStamp;
+    if (time - previewWheelGesture.time > 180 || direction !== previewWheelGesture.direction) {
+        previewWheelGesture = { time, direction, delta: 0, paged: false };
+    }
+    previewWheelGesture.time = time;
+    if (previewWheelGesture.paged) return;
+    // WheelEvent 可使用像素、行或页作为单位。
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 600 : 1;
+    previewWheelGesture.delta += event.deltaY * unit;
+    if (Math.abs(previewWheelGesture.delta) < 40) return;
+    previewWheelGesture.paged = true;
+    return changePreviewPage(direction);
 }
 
 function setupKeyboardShortcuts() {
@@ -3904,11 +3954,16 @@ function setupHamburgerMenu() {
     hamburgerBtn.addEventListener('click', () => {
         toolbarRight.classList.toggle('mobile-open');
         hamburgerBtn.classList.toggle('active');
+        if (toolbarRight.classList.contains('mobile-open') && window.innerWidth <= 1200) {
+            setDocumentSidebarOpen(false);
+        }
+        if (!toolbarRight.classList.contains('mobile-open')) setExportMenuOpen(false);
     });
 
     // 点击菜单项后自动关闭
     toolbarRight.addEventListener('click', (e) => {
-        if (e.target.closest('.btn')) {
+        const button = e.target.closest('.btn');
+        if (button && button.id !== 'exportMenuBtn' && !button.disabled) {
             toolbarRight.classList.remove('mobile-open');
             hamburgerBtn.classList.remove('active');
         }
@@ -3920,6 +3975,11 @@ function setDocumentSidebarOpen(open) {
     document.getElementById('documentSidebar').hidden = !open;
     document.getElementById('documentsBtn').setAttribute('aria-expanded', String(open));
     document.getElementById('documentSidebarBackdrop').hidden = !open || window.innerWidth > 1200;
+    if (open && window.innerWidth <= 1200) {
+        document.getElementById('toolbarRight').classList.remove('mobile-open');
+        document.getElementById('hamburgerBtn').classList.remove('active');
+        setExportMenuOpen(false);
+    }
 }
 
 function renderDocumentList() {

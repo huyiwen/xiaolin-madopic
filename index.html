@@ -29,7 +29,7 @@
     <meta name="twitter:title" content="Madopic - Markdown to Picture">
     <meta name="twitter:description" content="Markdown 海报生成工具，支持社交媒体长图、数学公式、Mermaid、ECharts 和多格式导出。">
     <meta name="twitter:image" content="https://madopic.thus.chat/favicon.svg">
-    <link rel="stylesheet" href="style.css?v=20260914-5">
+    <link rel="stylesheet" href="style.css?v=20260914-6">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <!-- KaTeX CSS -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
@@ -116,18 +116,25 @@
                 <button class="btn btn-secondary" id="layoutBtn">
                     <i class="fas fa-text-height"></i> 文字布局
                 </button>
-                <button class="btn btn-primary" id="exportPngBtn">
-                    <i class="fas fa-image"></i> 导出PNG
-                </button>
-                <button class="btn btn-primary" id="exportPdfBtn">
-                    <i class="fas fa-file-pdf"></i> 导出PDF
-                </button>
-                <button class="btn btn-primary" id="exportHtmlBtn">
-                    <i class="fas fa-file-code"></i> 导出HTML
-                </button>
-                <button class="btn btn-primary" id="exportMarkdownBtn">
-                    <i class="fab fa-markdown" aria-hidden="true"></i> 导出Markdown
-                </button>
+                <div class="export-menu" id="exportMenu">
+                    <button class="btn btn-primary" id="exportMenuBtn" aria-expanded="false" aria-controls="exportMenuItems">
+                        <i class="fas fa-download" aria-hidden="true"></i> 导出 <i class="fas fa-chevron-down" aria-hidden="true"></i>
+                    </button>
+                    <div class="export-menu-items" id="exportMenuItems" role="group" aria-label="导出格式" hidden>
+                        <button class="btn export-option" id="exportPngBtn">
+                            <i class="fas fa-image" aria-hidden="true"></i> PNG
+                        </button>
+                        <button class="btn export-option" id="exportPdfBtn">
+                            <i class="fas fa-file-pdf" aria-hidden="true"></i> PDF
+                        </button>
+                        <button class="btn export-option" id="exportHtmlBtn">
+                            <i class="fas fa-file-code" aria-hidden="true"></i> HTML
+                        </button>
+                        <button class="btn export-option" id="exportMarkdownBtn">
+                            <i class="fab fa-markdown" aria-hidden="true"></i> Markdown
+                        </button>
+                    </div>
+                </div>
                 <!-- build:commit -->
                 <a href="https://github.com/huyiwen/xiaolin-madopic" target="_blank" rel="noopener noreferrer" class="github-link" id="commitLink" title="本地开发版本 · 查看项目源码" aria-label="本地开发版本，查看项目源码">
                     <span>本地开发</span>
@@ -176,6 +183,12 @@
                         <button class="tool-btn" data-action="image" title="插入图片">
                             <i class="fas fa-image"></i>
                         </button>
+                        <button class="tool-btn" data-action="card" title="插入卡片">
+                            <i class="fas fa-id-card"></i>
+                        </button>
+                        <button class="tool-btn" data-action="empty-line" title="插入空行">
+                            <i class="fas fa-paragraph"></i>
+                        </button>
                         <button class="tool-btn" data-action="page-break" title="插入分页" aria-label="插入分页">
                             <i class="fas fa-file-alt" aria-hidden="true"></i>
                         </button>
@@ -212,16 +225,6 @@
                                 </button>
                             </div>
                         </details>
-                        <div class="tool-separator"></div>
-                        <button class="tool-btn" data-action="card" title="插入卡片">
-                            <i class="fas fa-id-card"></i>
-                        </button>
-                        <button class="tool-btn" data-action="empty-line" title="加入空行">
-                            <i class="fas fa-paragraph"></i>
-                        </button>
-                        <button class="tool-btn" data-action="clear" title="清空">
-                            <i class="fas fa-trash"></i>
-                        </button>
                     </div>
                 </div>
                 <!-- 隐藏的文件选择器 -->
@@ -270,17 +273,17 @@
                             <i class="fas fa-search-plus"></i>
                         </button>
                         <div class="page-controls" id="pageControls" role="group" aria-label="预览翻页" hidden>
-                            <button class="tool-btn" id="prevPage" title="上一页（←）" aria-label="上一页" aria-keyshortcuts="ArrowLeft" disabled>
+                            <button class="tool-btn" id="prevPage" title="上一页（← / ↑ / 滚轮向上）" aria-label="上一页" aria-keyshortcuts="ArrowLeft ArrowUp" disabled>
                                 <i class="fas fa-chevron-left" aria-hidden="true"></i>
                             </button>
                             <span class="page-indicator" id="pageIndicator" aria-live="polite" aria-atomic="true" title="独占一行输入 &lt;!--madopic-new-page--&gt; 可手动分页；PNG 和 PDF 导出全部页面">第 1 / 1 页</span>
-                            <button class="tool-btn" id="nextPage" title="下一页（→）" aria-label="下一页" aria-keyshortcuts="ArrowRight" disabled>
+                            <button class="tool-btn" id="nextPage" title="下一页（→ / ↓ / 滚轮向下）" aria-label="下一页" aria-keyshortcuts="ArrowRight ArrowDown" disabled>
                                 <i class="fas fa-chevron-right" aria-hidden="true"></i>
                             </button>
                         </div>
                     </div>
                 </div>
-                <div class="preview-container" id="previewContainer" tabindex="0" aria-label="实时预览，小红书模式可按左右方向键翻页">
+                <div class="preview-container" id="previewContainer" tabindex="0" aria-label="实时预览，小红书模式可用滚轮或上下左右方向键翻页">
                     <div class="preview-content" id="previewContent">
                         <div class="markdown-poster" id="markdownPoster">
                             <div class="poster-content" id="posterContent">
@@ -420,7 +423,7 @@
     </div>
 
     <script src="documents.js?v=20260914-1"></script>
-    <script src="script.js?v=20260914-7"></script>
+    <script src="script.js?v=20260914-8"></script>
     <noscript>Madopic 是由 XIAOLIN AI LAB 出品的 Markdown to picture 在线工具，可将 Markdown 内容制作成图片海报、社交媒体长图、知识卡片、技术文档图和公式图表海报。</noscript>
 </body>
 

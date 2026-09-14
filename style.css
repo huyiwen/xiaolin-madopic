@@ -113,6 +113,32 @@ body {
     gap: 8px;
 }
 
+.export-menu { position: relative; }
+.export-menu-items {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 30;
+    width: 180px;
+    padding: 6px;
+    background: var(--background-primary);
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+}
+.export-menu-items[hidden] { display: none; }
+.export-menu-items .export-option {
+    width: 100%;
+    padding: 10px;
+    gap: 10px;
+    background: transparent;
+    color: var(--text-secondary);
+    justify-content: flex-start;
+}
+.export-option i { width: 16px; text-align: center; }
+.export-option:hover:not(:disabled), .export-option:focus-visible { background: var(--background-tertiary); }
+#exportMenuBtn[aria-expanded="true"] .fa-chevron-down { transform: rotate(180deg); }
+
 .mode-group {
     display: flex;
     gap: 4px;
@@ -1572,6 +1598,15 @@ select {
         width: 100%;
         justify-content: center;
     }
+
+    .toolbar-right .export-menu { width: 100%; }
+    .toolbar-right .export-menu-items {
+        position: static;
+        width: 100%;
+        margin-top: 8px;
+        box-shadow: none;
+    }
+    .toolbar-right .export-option { justify-content: flex-start; }
 
     /* GitHub链接居中 */
     .toolbar-right .github-link {
