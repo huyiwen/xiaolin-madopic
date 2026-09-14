@@ -176,8 +176,13 @@ body {
     color: white;
 }
 
-.btn-primary:hover {
+.btn-primary:hover:not(:disabled) {
     background: #A68F5F;
+}
+
+.btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
 }
 
 .btn-secondary {
@@ -398,6 +403,21 @@ body {
 .markdown-poster[data-mode="pyq"] {
     box-sizing: border-box;
 }
+
+.poster-corner {
+    position: absolute;
+    z-index: 2;
+    max-width: calc(50% - 24px);
+    line-height: 1.35;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    pointer-events: none;
+}
+
+.poster-corner-top-left { top: 10px; left: 12px; }
+.poster-corner-top-right { top: 10px; right: 12px; text-align: right; }
+.poster-corner-bottom-left { bottom: 10px; left: 12px; }
+.poster-corner-bottom-right { bottom: 10px; right: 12px; text-align: right; }
 
 .poster-content {
     background: var(--background-primary) !important;
@@ -885,6 +905,92 @@ select {
     gap: 12px;
     margin-top: 24px;
     justify-content: flex-end;
+}
+
+.header-footer-panel {
+    width: 680px;
+    max-width: calc(100vw - 32px);
+    visibility: hidden;
+}
+
+.header-footer-panel.active { visibility: visible; }
+
+.header-footer-hint {
+    margin-bottom: 20px;
+    font-size: 13px;
+    color: var(--text-tertiary);
+}
+
+.header-footer-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+}
+
+.corner-settings {
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-md);
+}
+
+.corner-settings legend {
+    padding: 0 6px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.corner-settings label {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.corner-settings textarea {
+    display: block;
+    width: 100%;
+    min-height: 56px;
+    margin: 6px 0 10px;
+    padding: 8px;
+    resize: vertical;
+    font: inherit;
+    font-size: 13px;
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-sm);
+}
+
+.corner-style-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 60px 48px;
+    gap: 8px;
+}
+
+.corner-style-controls input,
+.corner-style-controls select {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    height: 32px;
+    margin-top: 4px;
+    padding: 4px;
+    font-size: 12px;
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-sm);
+}
+
+.corner-text-options {
+    display: flex;
+    gap: 16px;
+    margin-top: 10px;
+}
+
+.corner-text-options label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+@media (max-width: 600px) {
+    .header-footer-fields { grid-template-columns: 1fr; }
 }
 
 /* 遮罩层 */

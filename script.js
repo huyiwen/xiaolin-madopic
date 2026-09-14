@@ -51,6 +51,36 @@ let currentPadding = AppState.padding;
 let currentWidth = AppState.width;
 let currentMode = AppState.mode;
 let fixedHeights = AppState.fixedHeights;
+let isExporting = false;
+
+const HEADER_FOOTER_CORNERS = {
+    'top-left': '左上角 · 页眉',
+    'top-right': '右上角 · 页眉',
+    'bottom-left': '左下角 · 页脚',
+    'bottom-right': '右下角 · 页脚'
+};
+const HEADER_FOOTER_FONTS = {
+    sans: '-apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif',
+    serif: 'Georgia, "Songti SC", "SimSun", serif',
+    mono: '"SF Mono", Monaco, Consolas, monospace'
+};
+let currentHeaderFooter = normalizeHeaderFooterSettings();
+let headerFooterDraft = null;
+
+function normalizeHeaderFooterSettings(settings = {}) {
+    return Object.fromEntries(Object.keys(HEADER_FOOTER_CORNERS).map(corner => {
+        const value = settings?.[corner] || {};
+        const fontSize = Number(value.fontSize);
+        return [corner, {
+            text: typeof value.text === 'string' ? value.text : '',
+            fontSize: Number.isFinite(fontSize) ? Math.max(8, Math.min(32, fontSize)) : 12,
+            color: /^#[0-9a-f]{6}$/i.test(value.color) ? value.color : '#ffffff',
+            font: Object.hasOwn(HEADER_FOOTER_FONTS, value.font) ? value.font : 'sans',
+            bold: value.bold === true,
+            italic: value.italic === true
+        }];
+    }));
+}
 
 // ===== 工具函数 =====
 
@@ -100,6 +130,14 @@ async function ensurePdfExportLibsLoaded() {
         loadScript('https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js'),
         loadScript('https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js')
     ]);
+}
+
+async function ensureZipExportLibLoaded() {
+    await loadScript('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js');
+}
+
+async function ensurePdfMergeLibLoaded() {
+    await loadScript('https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js');
 }
 
 /**
@@ -245,7 +283,8 @@ function autoSave(content) {
             fontSize: typeof currentFontSize !== 'undefined' ? currentFontSize : 18,
             width: typeof currentWidth !== 'undefined' ? currentWidth : 640,
             padding: typeof currentPadding !== 'undefined' ? currentPadding : 24,
-            mode: typeof currentMode !== 'undefined' ? currentMode : 'free'
+            mode: typeof currentMode !== 'undefined' ? currentMode : 'free',
+            headerFooter: currentHeaderFooter
         }));
     } catch (e) {
         console.warn('自动保存失败:', e);
@@ -842,6 +881,7 @@ const pageControls = document.getElementById('pageControls');
 const pageIndicator = document.getElementById('pageIndicator');
 const prevPageButton = document.getElementById('prevPage');
 const nextPageButton = document.getElementById('nextPage');
+const headerFooterPanel = document.getElementById('headerFooterPanel');
 
 // 图片数据存储（使用 Map 提供更好的性能）
 const imageDataStore = new Map();
@@ -1076,6 +1116,7 @@ function setupEventListeners() {
     document.getElementById('backgroundBtn').addEventListener('click', openBackgroundPanel);
     document.getElementById('cancelBackground').addEventListener('click', closeBackgroundPanel);
     document.getElementById('applyBackground').addEventListener('click', applyBackgroundSettings);
+    setupHeaderFooterPanel();
 
     // 文字布局设置面板
     document.getElementById('layoutBtn').addEventListener('click', openLayoutPanel);
@@ -1121,6 +1162,35 @@ function setupExportButtons() {
     if (exportHtmlBtn) {
         exportHtmlBtn.addEventListener('click', exportToHTML);
     }
+    updateExportButtons();
+}
+
+function updateExportButtons() {
+    const isXhs = currentMode === 'xhs';
+    const descriptions = {
+        exportPngBtn: isXhs ? '将全部分页导出为 PNG 压缩包（ZIP）' : '导出 PNG 图片',
+        exportPdfBtn: isXhs ? '将全部分页合并为一个 PDF 文档' : '导出 PDF 文档',
+        exportHtmlBtn: isXhs ? '小红书模式不支持导出 HTML，请使用 PNG 或 PDF' : '导出 HTML 页面'
+    };
+    Object.entries(descriptions).forEach(([id, title]) => {
+        const button = document.getElementById(id);
+        if (!button) return;
+        button.disabled = isExporting || (id === 'exportHtmlBtn' && isXhs);
+        button.title = title;
+        button.setAttribute('aria-busy', String(isExporting));
+    });
+}
+
+function beginExport() {
+    if (isExporting) return false;
+    isExporting = true;
+    updateExportButtons();
+    return true;
+}
+
+function endExport() {
+    isExporting = false;
+    updateExportButtons();
 }
 
 // 模式按钮绑定
@@ -1139,6 +1209,7 @@ function setMode(mode) {
     if (!['free', 'xhs', 'pyq'].includes(mode)) return;
     if (currentMode !== mode) currentPreviewPage = 0;
     currentMode = mode;
+    updateExportButtons();
     // 切换按钮激活态
     const group = document.getElementById('modeGroup');
     if (group) {
@@ -1339,7 +1410,7 @@ function updatePreview() {
     return previewRenderPromise;
 }
 
-async function renderPreviewPage(markdownText, renderVersion) {
+function prepareMarkdownHTML(markdownText) {
     // 预处理数学公式
     let processedMarkdown = mathRenderer.preprocessMath(markdownText);
 
@@ -1355,11 +1426,13 @@ async function renderPreviewPage(markdownText, renderVersion) {
     // 替换简化的base64为完整版本进行预览
     processedMarkdown = replaceImageDataForPreview(processedMarkdown);
 
+    return sanitizeHTML(marked.parse(processedMarkdown));
+}
+
+async function renderPreviewPage(markdownText, renderVersion) {
     let htmlContent = '';
     try {
-        htmlContent = marked.parse(processedMarkdown);
-        // 安全性：清理潜在的 XSS 攻击代码
-        htmlContent = sanitizeHTML(htmlContent);
+        htmlContent = prepareMarkdownHTML(markdownText);
     } catch (err) {
         console.error('Markdown 渲染失败: ', err);
         htmlContent = '<p style="color:#ef4444">渲染失败，请检查 Markdown 内容。</p>';
@@ -1539,8 +1612,109 @@ function closeLayoutPanel() {
 function closeAllPanels() {
     backgroundPanel.classList.remove('active');
     layoutPanel.classList.remove('active');
+    closeHeaderFooterPanel();
     overlay.classList.remove('active');
     document.body.style.overflow = '';
+}
+
+function renderHeaderFooter(poster, settings = currentHeaderFooter) {
+    poster.querySelectorAll('.poster-corner').forEach(element => element.remove());
+    Object.entries(settings).forEach(([corner, value]) => {
+        if (!value.text.trim()) return;
+        const text = document.createElement('div');
+        text.className = `poster-corner poster-corner-${corner}`;
+        text.dataset.corner = corner;
+        text.textContent = value.text;
+        Object.assign(text.style, {
+            fontSize: `${value.fontSize}px`,
+            color: value.color,
+            fontFamily: HEADER_FOOTER_FONTS[value.font],
+            fontWeight: value.bold ? '700' : '400',
+            fontStyle: value.italic ? 'italic' : 'normal'
+        });
+        poster.appendChild(text);
+    });
+}
+
+function setupHeaderFooterPanel() {
+    const fields = document.getElementById('headerFooterFields');
+    fields.innerHTML = Object.entries(HEADER_FOOTER_CORNERS).map(([corner, label]) => `
+        <fieldset class="corner-settings" data-corner="${corner}">
+            <legend>${label}</legend>
+            <label for="${corner}-text">文字内容</label>
+            <textarea id="${corner}-text" data-field="text" rows="2" placeholder="留空则不显示"></textarea>
+            <div class="corner-style-controls">
+                <label>字体<select data-field="font" aria-label="${label}字体">
+                    <option value="sans">无衬线</option><option value="serif">衬线</option><option value="mono">等宽</option>
+                </select></label>
+                <label>字号<input data-field="fontSize" type="number" min="8" max="32" step="1" aria-label="${label}字号"></label>
+                <label>颜色<input data-field="color" type="color" aria-label="${label}颜色"></label>
+            </div>
+            <div class="corner-text-options">
+                <label><input data-field="bold" type="checkbox"> 加粗</label>
+                <label><input data-field="italic" type="checkbox"> 斜体</label>
+            </div>
+        </fieldset>
+    `).join('');
+    fields.addEventListener('input', () => {
+        const settings = {};
+        fields.querySelectorAll('[data-corner]').forEach(fieldset => {
+            const value = {};
+            fieldset.querySelectorAll('[data-field]').forEach(input => {
+                value[input.dataset.field] = input.type === 'checkbox' ? input.checked : input.value;
+            });
+            settings[fieldset.dataset.corner] = value;
+        });
+        headerFooterDraft = normalizeHeaderFooterSettings(settings);
+        renderHeaderFooter(markdownPoster, headerFooterDraft);
+    });
+    document.getElementById('headerFooterBtn').addEventListener('click', openHeaderFooterPanel);
+    document.getElementById('cancelHeaderFooter').addEventListener('click', closeHeaderFooterPanel);
+    document.getElementById('applyHeaderFooter').addEventListener('click', () => {
+        currentHeaderFooter = normalizeHeaderFooterSettings(headerFooterDraft);
+        closeHeaderFooterPanel();
+        autoSave(markdownInput.value);
+    });
+    headerFooterPanel.addEventListener('keydown', event => {
+        if (event.key !== 'Tab') return;
+        const controls = headerFooterPanel.querySelectorAll('textarea, input, select, button');
+        const first = controls[0];
+        const last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+        }
+    });
+}
+
+function openHeaderFooterPanel() {
+    headerFooterDraft = normalizeHeaderFooterSettings(currentHeaderFooter);
+    headerFooterPanel.querySelectorAll('[data-corner]').forEach(fieldset => {
+        const value = headerFooterDraft[fieldset.dataset.corner];
+        fieldset.querySelectorAll('[data-field]').forEach(input => {
+            if (input.type === 'checkbox') input.checked = value[input.dataset.field];
+            else input.value = value[input.dataset.field];
+        });
+    });
+    headerFooterPanel.classList.add('active');
+    headerFooterPanel.setAttribute('aria-hidden', 'false');
+    overlay.classList.add('active');
+    document.body.style.overflow = 'hidden';
+    document.getElementById('top-left-text').focus();
+}
+
+function closeHeaderFooterPanel() {
+    const wasOpen = headerFooterPanel.classList.contains('active');
+    headerFooterPanel.classList.remove('active');
+    headerFooterDraft = null;
+    renderHeaderFooter(markdownPoster);
+    overlay.classList.remove('active');
+    document.body.style.overflow = '';
+    if (wasOpen) document.getElementById('headerFooterBtn').focus();
+    headerFooterPanel.setAttribute('aria-hidden', 'true');
 }
 
 function setupBackgroundPresets() {
@@ -1677,11 +1851,9 @@ function setupSliders() {
 /**
  * 创建一个与预览完全一致的离屏克隆节点用于导出。
  * 关键点：同步计算样式与实际渲染宽度，并统一为 border-box，避免行宽与换行偏差。
- * 返回被追加到 body 的节点，调用方负责移除。
+ * 返回未挂载的模板节点，供整批页面复用。
  */
-async function createExactExportNode() {
-    // 包含刚输入或刚翻到的页面，并等待其公式、图表完成渲染。
-    await updatePreview();
+function createExportTemplate() {
     const clone = markdownPoster.cloneNode(true);
     clone.id = 'madopic-export-poster';
     const mpComputed = getComputedStyle(markdownPoster);
@@ -1699,6 +1871,7 @@ async function createExactExportNode() {
     // 移除内部动画/滤镜但不改变布局
     const inner = clone.querySelector('.poster-content');
     if (inner) {
+        inner.removeAttribute('id');
         const pcComputed = getComputedStyle(posterContent);
         inner.style.animation = 'none';
         inner.style.width = `${getUnscaledWidth(posterContent)}px`;
@@ -1740,38 +1913,102 @@ async function createExactExportNode() {
             inner.style.overflow = 'hidden';
         }
     }
-    document.body.appendChild(clone);
-
-    // 为导出节点重新渲染数学公式
-    const cloneContent = clone.querySelector('.poster-content');
-    if (cloneContent) {
-        mathRenderer.renderMath(cloneContent);
-
-        // 为导出节点的Mermaid图表生成新的唯一ID，避免与原始预览区冲突
-        const mermaidContainers = cloneContent.querySelectorAll('.mermaid-container');
-        mermaidContainers.forEach((container, index) => {
-            const timestamp = Date.now();
-            const newId = `export-mermaid-${timestamp}-${index}`;
-            container.setAttribute('data-diagram-id', newId);
-        });
-
-        // 为导出节点重新渲染图表
-        await diagramRenderer.renderDiagrams(cloneContent);
-
-        // 为导出节点重新渲染ECharts图表
-        await echartsRenderer.renderECharts(cloneContent);
-
-        // 为导出节点重新渲染卡片
-        await cardRenderer.renderCards(cloneContent);
-
-        // 额外等待确保所有渲染完成
-        await new Promise(resolve => setTimeout(resolve, 500));
-
-        // 再等待一帧确保DOM更新完成
-        await new Promise(resolve => requestAnimationFrame(resolve));
-    }
-
     return clone;
+}
+
+// 点击导出时同步保存全文、模式和布局；后续编辑、缩放、翻页不影响这次导出。
+function createExportSnapshot() {
+    const pages = currentMode === 'xhs' ? splitMarkdownPages(markdownInput.value) : [markdownInput.value];
+    return {
+        mode: currentMode,
+        pages: pages.map(replaceImageDataForPreview),
+        template: createExportTemplate(),
+        filename: `madopic-${getFormattedTimestamp()}`
+    };
+}
+
+let exportRenderVersion = 0;
+
+function disposeExportNode(node) {
+    if (!node) return;
+    echartsRenderer.destroyAll(node);
+    node.remove();
+}
+
+async function createExactExportNode(snapshot = null, pageIndex = 0) {
+    if (!snapshot) await updatePreview();
+    const clone = snapshot ? snapshot.template.cloneNode(true) : createExportTemplate();
+    const renderId = ++exportRenderVersion;
+    try {
+        const content = clone.querySelector('.poster-content');
+        if (snapshot && content) content.innerHTML = prepareMarkdownHTML(snapshot.pages[pageIndex]);
+        document.body.appendChild(clone);
+
+        // 为导出节点重新渲染数学公式
+        const cloneContent = clone.querySelector('.poster-content');
+        if (cloneContent) {
+            mathRenderer.renderMath(cloneContent);
+
+            // 为导出节点的Mermaid图表生成新的唯一ID，避免与原始预览区冲突
+            const mermaidContainers = cloneContent.querySelectorAll('.mermaid-container');
+            mermaidContainers.forEach((container, index) => {
+                const newId = `export-mermaid-${renderId}-${index}`;
+                container.setAttribute('data-diagram-id', newId);
+            });
+
+            // 为导出节点重新渲染图表
+            await diagramRenderer.renderDiagrams(cloneContent);
+
+            // 为导出节点重新渲染ECharts图表
+            await echartsRenderer.renderECharts(cloneContent);
+
+            // 为导出节点重新渲染卡片
+            await cardRenderer.renderCards(cloneContent);
+
+            if (typeof Prism !== 'undefined') Prism.highlightAllUnder(cloneContent);
+
+            // 额外等待确保所有渲染完成
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            // 再等待一帧确保DOM更新完成
+            await new Promise(resolve => requestAnimationFrame(resolve));
+        }
+
+        return clone;
+    } catch (error) {
+        disposeExportNode(clone);
+        throw error;
+    }
+}
+
+async function forEachExportPage(snapshot, consumePage) {
+    for (let index = 0; index < snapshot.pages.length; index++) {
+        let node = null;
+        try {
+            node = await createExactExportNode(snapshot, index);
+            await prepareImagesForExport(node);
+            if (document.fonts && document.fonts.ready) await document.fonts.ready;
+            await new Promise(resolve => requestAnimationFrame(resolve));
+            await consumePage(node, index);
+        } finally {
+            disposeExportNode(node);
+        }
+    }
+}
+
+function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    try {
+        link.click();
+    } finally {
+        link.remove();
+        // 给浏览器时间读取下载内容，再释放对象 URL。
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+    }
 }
 
 /**
@@ -1879,132 +2116,115 @@ function tryProxyImage(img) {
  * 导出为 PNG（通过克隆节点离屏渲染，保证与预览一致）。
  * 流程：等待字体 → 克隆节点 → 读取尺寸 → html2canvas 渲染 → 透明边缘裁剪 → 触发下载 → 清理。
  */
-async function exportToPNG() {
-    let exportNode = null;
+async function renderExportPng(node, mode) {
+    const rect = node.getBoundingClientRect();
+    const width = Math.ceil(rect.width);
+    const height = Math.ceil(rect.height);
+    if (height * EXPORT_SCALE > 32767) {
+        showNotification('内容过长，可能导致导出失败。建议缩短内容或降低导出比例。', 'warning');
+    }
+    const canvas = await renderWithFallbackScales(node, width, height, getExportScaleCandidates(EXPORT_SCALE));
+    let outputCanvas = canvas;
+    if (mode === 'free') {
+        try {
+            outputCanvas = trimTransparentEdges(canvas) || canvas;
+        } catch (error) {
+            console.warn('无法裁剪透明边缘:', error);
+        }
+    }
     try {
-        showNotification('正在生成图片...', 'info');
-
-        // 懒加载导出所需的库
-        await ensureCanvasExportLibLoaded();
-
-        exportNode = await createExactExportNode();
-
-        // 预处理导出节点中的图片：设置跨域/防盗链属性并强制重新加载，尽量保证可被 html2canvas 捕获
-        try {
-            await prepareImagesForExport(exportNode);
-        } catch (_) {
-            // 忽略单个图片处理失败
-        }
-
-        // 等待字体与一帧渲染
-        if (document.fonts && document.fonts.ready) {
-            try { await document.fonts.ready; } catch (_) { }
-        }
-        await new Promise(r => requestAnimationFrame(r));
-
-        const rect = exportNode.getBoundingClientRect();
-        const targetWidth = Math.ceil(rect.width);
-        const targetHeight = Math.ceil(rect.height);
-
-        // Canvas 尺寸预检查（浏览器限制通常为 32767px）
-        const maxCanvasSize = 32767;
-        const estimatedHeight = targetHeight * EXPORT_SCALE;
-        if (estimatedHeight > maxCanvasSize) {
-            showNotification(`内容过长（约${Math.round(estimatedHeight)}px），可能导致导出失败。建议缩短内容或降低导出比例。`, 'warning');
-        }
-
-        const tryScales = getExportScaleCandidates(EXPORT_SCALE);
-        const canvas = await renderWithFallbackScales(exportNode, targetWidth, targetHeight, tryScales);
-
-        // 尝试裁剪透明边缘，如果因跨域图片导致失败则跳过裁剪
-        let trimmedCanvas = null;
-        if (currentMode === 'free') {
-            try {
-                trimmedCanvas = trimTransparentEdges(canvas);
-            } catch (error) {
-                console.warn('无法裁剪透明边缘（可能包含跨域图片）:', error.message);
-            }
-        }
-        const outputCanvas = trimmedCanvas || canvas;
-
-        // 增强 toDataURL 错误处理
-        let dataUrl;
-        try {
-            dataUrl = outputCanvas.toDataURL('image/png', 1.0);
-        } catch (dataUrlError) {
-            console.error('toDataURL 失败:', dataUrlError);
-            if (dataUrlError.name === 'SecurityError') {
-                showNotification('导出失败：图片包含跨域资源，无法导出。请移除外部图片后重试。', 'error');
-            } else {
-                showNotification('导出失败：无法生成图片数据。请尝试缩短内容。', 'error');
-            }
-            return;
-        }
-
-        const link = document.createElement('a');
-        link.download = `madopic-${getFormattedTimestamp()}.png`;
-        link.href = dataUrl;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-
-        showNotification('图片导出成功！', 'success');
-    } catch (error) {
-        console.error('导出失败:', error);
-        // 提供更具体的错误信息
-        let errorMsg = '导出失败，请重试';
-        if (error.message) {
-            if (error.message.includes('缩放倍数')) {
-                errorMsg = '导出失败：内容过大，请缩短内容后重试';
-            } else if (error.message.includes('tainted') || error.message.includes('cross-origin')) {
-                errorMsg = '导出失败：包含跨域图片，请移除外部图片后重试';
-            } else if (error.message.includes('memory') || error.message.includes('heap')) {
-                errorMsg = '导出失败：内存不足，请缩短内容或关闭其他页面后重试';
-            }
-        }
-        showNotification(errorMsg, 'error');
+        return await new Promise((resolve, reject) => {
+            outputCanvas.toBlob(blob => {
+                if (blob) resolve(blob);
+                else reject(new Error('无法生成 PNG 图片数据'));
+            }, 'image/png');
+        });
     } finally {
-        if (exportNode && exportNode.parentNode) {
-            exportNode.parentNode.removeChild(exportNode);
+        // 图片数据已转为 Blob，及时释放大画布，避免多页导出占满内存。
+        canvas.width = canvas.height = 0;
+        if (outputCanvas !== canvas) outputCanvas.width = outputCanvas.height = 0;
+    }
+}
+
+async function exportToPNG() {
+    if (!beginExport()) return;
+    try {
+        const snapshot = createExportSnapshot();
+        const isXhs = snapshot.mode === 'xhs';
+        showNotification(isXhs ? `正在生成全部 ${snapshot.pages.length} 页 PNG 压缩包...` : '正在生成图片...', 'info');
+        await ensureCanvasExportLibLoaded();
+        if (isXhs) await ensureZipExportLibLoaded();
+        const zip = isXhs ? new JSZip() : null;
+        let singleImage;
+        const digits = Math.max(3, String(snapshot.pages.length).length);
+        await forEachExportPage(snapshot, async (node, index) => {
+            const blob = await renderExportPng(node, snapshot.mode);
+            if (zip) {
+                zip.file(`page-${String(index + 1).padStart(digits, '0')}.png`, blob);
+            } else {
+                singleImage = blob;
+            }
+        });
+        if (zip) {
+            const archive = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+            downloadBlob(archive, `${snapshot.filename}.zip`);
+            showNotification(`已导出全部 ${snapshot.pages.length} 页 PNG（ZIP 压缩包）！`, 'success');
+        } else {
+            downloadBlob(singleImage, `${snapshot.filename}.png`);
+            showNotification('图片导出成功！', 'success');
         }
+    } catch (error) {
+        console.error('PNG 导出失败:', error);
+        const message = error.name === 'SecurityError' ? 'PNG 导出失败：包含无法导出的跨域图片' : 'PNG 导出失败，请重试';
+        showNotification(message, 'error');
+    } finally {
+        endExport();
     }
 }
 
 async function exportToPDF() {
-    let exportNode = null;
+    if (!beginExport()) return;
     try {
-        showNotification('正在生成可编辑 PDF...', 'info');
+        const snapshot = createExportSnapshot();
+        const isXhs = snapshot.mode === 'xhs';
+        showNotification(`正在生成 ${snapshot.pages.length} 页可编辑 PDF...`, 'info');
         await ensurePdfExportLibsLoaded();
-
-        exportNode = await createExactExportNode();
-
-        try {
-            await prepareImagesForExport(exportNode);
-        } catch (_) {
-            // 忽略单个图片处理失败
+        if (isXhs) await ensurePdfMergeLibLoaded();
+        const mergedPdf = isXhs ? await PDFLib.PDFDocument.create() : null;
+        let singlePdf;
+        let rasterPages = 0;
+        await forEachExportPage(snapshot, async node => {
+            await replaceEChartsWithImages(node);
+            let pdf;
+            try {
+                pdf = await exportEditablePDF(node);
+            } catch (error) {
+                console.warn('可编辑 PDF 页面生成失败，回退为图片页面:', error);
+                pdf = await exportRasterPDF(node);
+                rasterPages++;
+            }
+            if (mergedPdf) {
+                // 逐页合并，保留每页的文字层、字体和图片；不让 jsPDF 的 HTML 排版跨页覆盖。
+                const pageDocument = await PDFLib.PDFDocument.load(pdf.output('arraybuffer'));
+                const pages = await mergedPdf.copyPages(pageDocument, pageDocument.getPageIndices());
+                pages.forEach(page => mergedPdf.addPage(page));
+            } else {
+                singlePdf = pdf;
+            }
+        });
+        if (mergedPdf) {
+            downloadBlob(new Blob([await mergedPdf.save()], { type: 'application/pdf' }), `${snapshot.filename}.pdf`);
+        } else {
+            singlePdf.save(`${snapshot.filename}.pdf`);
         }
-        await replaceEChartsWithImages(exportNode);
-
-        if (document.fonts && document.fonts.ready) {
-            try { await document.fonts.ready; } catch (_) { }
-        }
-        await new Promise(r => requestAnimationFrame(r));
-
-        try {
-            await exportEditablePDF(exportNode);
-            showNotification('可编辑 PDF 导出成功！', 'success');
-        } catch (editableError) {
-            console.warn('可编辑 PDF 生成失败，回退为图片 PDF:', editableError);
-            await exportRasterPDF(exportNode);
-            showNotification('可编辑 PDF 生成失败，已自动导出兼容图片 PDF', 'warning');
-        }
+        showNotification(rasterPages
+            ? `PDF 已导出，共 ${snapshot.pages.length} 页，其中 ${rasterPages} 页使用兼容图片模式`
+            : `可编辑 PDF 导出成功，共 ${snapshot.pages.length} 页！`, rasterPages ? 'warning' : 'success');
     } catch (error) {
         console.error('PDF 导出失败:', error);
         showNotification('PDF 导出失败，请重试', 'error');
     } finally {
-        if (exportNode && exportNode.parentNode) {
-            exportNode.parentNode.removeChild(exportNode);
-        }
+        endExport();
     }
 }
 
@@ -2049,6 +2269,7 @@ function setPdfExportPosition(node) {
 
 function preparePdfBackgroundNode(sourceNode) {
     const node = sourceNode.cloneNode(true);
+    node.querySelectorAll('.poster-corner').forEach(element => element.remove());
     setPdfExportPosition(node);
     node.querySelectorAll('*').forEach(element => {
         // 公式与图表保留为视觉底图；普通正文会由 PDF 文本层重新绘制。
@@ -2057,11 +2278,18 @@ function preparePdfBackgroundNode(sourceNode) {
             element.style.setProperty('text-shadow', 'none', 'important');
         }
     });
+    // 公式通常继承段落颜色；隐藏正文后需显式恢复视觉元素的颜色。
+    const visualSelector = '.katex, .mermaid-container, .echarts-container';
+    const sourceVisuals = sourceNode.querySelectorAll(visualSelector);
+    node.querySelectorAll(visualSelector).forEach((element, index) => {
+        element.style.setProperty('color', getComputedStyle(sourceVisuals[index]).color, 'important');
+    });
     return node;
 }
 
 function preparePdfTextNode(sourceNode) {
     const node = sourceNode.cloneNode(true);
+    node.querySelectorAll('.poster-corner').forEach(element => element.remove());
     setPdfExportPosition(node);
     node.style.setProperty('background', 'transparent', 'important');
     node.style.setProperty('box-shadow', 'none', 'important');
@@ -2084,8 +2312,32 @@ function preparePdfTextNode(sourceNode) {
     return node;
 }
 
+async function addPdfHeaderFooter(pdf, sourceNode, width, height) {
+    if (!sourceNode.querySelector('.poster-corner')) return;
+    const overlayNode = sourceNode.cloneNode(true);
+    overlayNode.querySelector('.poster-content')?.remove();
+    setPdfExportPosition(overlayNode);
+    overlayNode.style.height = `${height}px`;
+    overlayNode.style.setProperty('background', 'transparent', 'important');
+    overlayNode.style.setProperty('border-color', 'transparent', 'important');
+    overlayNode.style.setProperty('box-shadow', 'none', 'important');
+    document.body.appendChild(overlayNode);
+    let canvas;
+    try {
+        canvas = await html2canvas(overlayNode, {
+            backgroundColor: null, scale: EXPORT_SCALE, width, height,
+            windowWidth: width, windowHeight: height, logging: false
+        });
+        // 在正文文字层之后绘制，保证四角文字始终浮在正文之上，并保留其字体样式。
+        pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, width, height, undefined, 'FAST');
+    } finally {
+        overlayNode.remove();
+        if (canvas) canvas.width = canvas.height = 0;
+    }
+}
+
 async function exportEditablePDF(sourceNode) {
-    const fontBase64Promise = loadEditablePdfFont();
+    const fontBase64 = await loadEditablePdfFont();
     const rect = sourceNode.getBoundingClientRect();
     const width = Math.ceil(rect.width);
     const height = Math.ceil(rect.height);
@@ -2112,7 +2364,6 @@ async function exportEditablePDF(sourceNode) {
     const textNode = preparePdfTextNode(sourceNode);
     document.body.appendChild(textNode);
     try {
-        const fontBase64 = await fontBase64Promise;
         const { jsPDF } = window.jspdf;
         const pdf = new jsPDF({
             orientation: width > height ? 'landscape' : 'portrait',
@@ -2144,7 +2395,8 @@ async function exportEditablePDF(sourceNode) {
             }
         });
 
-        pdf.save(`madopic-${getFormattedTimestamp()}.pdf`);
+        await addPdfHeaderFooter(pdf, sourceNode, width, height);
+        return pdf;
     } finally {
         textNode.remove();
     }
@@ -2169,11 +2421,12 @@ async function exportRasterPDF(exportNode) {
         compress: true
     });
     pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, width, height, undefined, 'FAST');
-    pdf.save(`madopic-${getFormattedTimestamp()}.pdf`);
+    return pdf;
 }
 
 // 导出为独立可打开的 HTML 文件
 async function exportToHTML() {
+    if (currentMode === 'xhs' || !beginExport()) return;
     let exportNode = null;
     try {
         showNotification('正在生成 HTML...', 'info');
@@ -2212,9 +2465,8 @@ async function exportToHTML() {
         console.error('HTML 导出失败:', error);
         showNotification('HTML 导出失败，请重试', 'error');
     } finally {
-        if (exportNode && exportNode.parentNode) {
-            exportNode.parentNode.removeChild(exportNode);
-        }
+        disposeExportNode(exportNode);
+        endExport();
     }
 }
 
@@ -2364,6 +2616,7 @@ function getExportScaleCandidates(preferred) {
  */
 async function renderWithFallbackScales(node, targetWidth, targetHeight, scales) {
     let lastError = null;
+    const padding = getComputedStyle(node).padding;
     for (const scale of scales) {
         try {
             // eslint-disable-next-line no-await-in-loop
@@ -2387,8 +2640,8 @@ async function renderWithFallbackScales(node, targetWidth, targetHeight, scales)
                         clonedTarget.style.setProperty('top', '0', 'important');
                         clonedTarget.style.setProperty('left', '0', 'important');
                         clonedTarget.style.setProperty('margin', '0', 'important');
-                        clonedTarget.style.setProperty('width', `${currentWidth}px`, 'important');
-                        clonedTarget.style.setProperty('padding', getComputedStyle(markdownPoster).padding, 'important');
+                        clonedTarget.style.setProperty('width', `${targetWidth}px`, 'important');
+                        clonedTarget.style.setProperty('padding', padding, 'important');
                         clonedTarget.style.setProperty('box-sizing', 'border-box', 'important');
                     }
                     // 再次为克隆文档内的图片设置跨域/防盗链属性（双保险）
@@ -3300,6 +3553,8 @@ function restoreDraft() {
 
     // 恢复设置
     if (settings) {
+        currentHeaderFooter = normalizeHeaderFooterSettings(settings.headerFooter);
+        renderHeaderFooter(markdownPoster);
         if (settings.background) {
             currentBackground = settings.background;
             if (backgroundPresets[currentBackground]) {

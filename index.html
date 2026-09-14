@@ -27,7 +27,7 @@
     <meta name="twitter:title" content="Madopic - Markdown to Picture">
     <meta name="twitter:description" content="Markdown 海报生成工具，支持社交媒体长图、数学公式、Mermaid、ECharts 和多格式导出。">
     <meta name="twitter:image" content="https://madopic.thus.chat/favicon.svg">
-    <link rel="stylesheet" href="style.css?v=20260914-1">
+    <link rel="stylesheet" href="style.css?v=20260914-2">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <!-- KaTeX CSS -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
@@ -104,6 +104,9 @@
                 </div>
                 <button class="btn btn-secondary" id="backgroundBtn">
                     <i class="fas fa-palette"></i> 背景设置
+                </button>
+                <button class="btn btn-secondary" id="headerFooterBtn">
+                    <i class="fas fa-file-alt" aria-hidden="true"></i> 页眉页脚
                 </button>
                 <button class="btn btn-secondary" id="layoutBtn">
                     <i class="fas fa-text-height"></i> 文字布局
@@ -241,7 +244,7 @@
                             <button class="tool-btn" id="prevPage" title="上一页" aria-label="上一页" disabled>
                                 <i class="fas fa-chevron-left" aria-hidden="true"></i>
                             </button>
-                            <span class="page-indicator" id="pageIndicator" aria-live="polite" aria-atomic="true" title="独占一行输入 &lt;!--madopic-new-page--&gt; 可手动分页；导出当前预览页">第 1 / 1 页</span>
+                            <span class="page-indicator" id="pageIndicator" aria-live="polite" aria-atomic="true" title="独占一行输入 &lt;!--madopic-new-page--&gt; 可手动分页；PNG 和 PDF 导出全部页面">第 1 / 1 页</span>
                             <button class="tool-btn" id="nextPage" title="下一页" aria-label="下一页" disabled>
                                 <i class="fas fa-chevron-right" aria-hidden="true"></i>
                             </button>
@@ -312,6 +315,19 @@
             </div>
         </div>
 
+        <!-- 页眉页脚设置面板 -->
+        <div class="background-panel header-footer-panel" id="headerFooterPanel" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="headerFooterTitle">
+            <div class="panel-content">
+                <h3 id="headerFooterTitle"><i class="fas fa-file-alt" aria-hidden="true"></i> 页眉页脚</h3>
+                <p class="header-footer-hint">四角文字浮在每页画布上，不占用正文空间。留空可隐藏对应位置。</p>
+                <div class="header-footer-fields" id="headerFooterFields"></div>
+                <div class="panel-actions">
+                    <button class="btn btn-secondary" id="cancelHeaderFooter">取消</button>
+                    <button class="btn btn-primary" id="applyHeaderFooter">应用</button>
+                </div>
+            </div>
+        </div>
+
         <!-- 文字布局设置面板 -->
         <div class="background-panel" id="layoutPanel">
             <div class="panel-content">
@@ -359,7 +375,7 @@
         <div class="overlay" id="overlay"></div>
     </div>
 
-    <script src="script.js?v=20260914-2"></script>
+    <script src="script.js?v=20260914-3"></script>
     <noscript>Madopic 是由 XIAOLIN AI LAB 出品的 Markdown to picture 在线工具，可将 Markdown 内容制作成图片海报、社交媒体长图、知识卡片、技术文档图和公式图表海报。</noscript>
 </body>
 

@@ -326,3 +326,162 @@ assert.equal(
   '853px',
   'XHS must keep its 3:4 layout when switching modes at 75% zoom',
 );
+
+// Export a complete snapshot even when the user starts on page two and edits during export.
+const downloads = [];
+const zipEntries = [];
+const renderedPages = [];
+const removedPages = [];
+context.Blob = Blob;
+context.captureDownload = (blob, filename) => downloads.push({ blob, filename });
+context.createTestExportNode = (content) => createElement({
+  content,
+  remove() { removedPages.push(content); },
+});
+context.capturePng = async (node) => {
+  renderedPages.push(node.content);
+  if (node.content === '失败页') throw new Error('Canvas render failed');
+  return new Blob([node.content], { type: 'image/png' });
+};
+context.JSZip = class {
+  file(name, blob) { zipEntries.push({ name, blob }); }
+  async generateAsync() { return new Blob(['zip'], { type: 'application/zip' }); }
+};
+run(`
+  showNotification = () => {};
+  downloadBlob = captureDownload;
+  createExactExportNode = async (snapshot, index) => createTestExportNode(snapshot.pages[index]);
+  prepareImagesForExport = async () => {};
+  renderExportPng = capturePng;
+  ensureZipExportLibLoaded = async () => {};
+  ensureCanvasExportLibLoaded = () => new Promise(resolve => { globalThis.finishExportLibraries = resolve; });
+  currentMode = 'xhs';
+  currentPreviewPage = 1;
+  markdownInput.value = ${JSON.stringify(`封面\n${pageBreak}\n正文\n${pageBreak}\n结尾`)};
+  globalThis.pendingExport = exportToPNG();
+`);
+assert.equal(run('document.getElementById("exportPngBtn").disabled'), true);
+assert.equal(run('document.getElementById("exportPdfBtn").disabled'), true);
+await run('exportToPNG()');
+assert.equal(downloads.length, 0, 'a second export click must not start another download');
+run(`markdownInput.value = '导出期间的新内容'; setMode('free'); finishExportLibraries();`);
+await run('pendingExport');
+assert.deepEqual(renderedPages, ['封面', '正文', '结尾'], 'export must use every original page in order');
+assert.deepEqual(removedPages, renderedPages, 'each temporary page must be disposed');
+assert.deepEqual(zipEntries.map(entry => entry.name), ['page-001.png', 'page-002.png', 'page-003.png']);
+assert.deepEqual(await Promise.all(zipEntries.map(entry => entry.blob.text())), ['封面', '正文', '结尾']);
+assert.equal(downloads.length, 1, 'all PNG pages must share one download');
+assert.match(downloads[0].filename, /\.zip$/);
+assert.equal(run('document.getElementById("exportPngBtn").disabled'), false);
+assert.equal(run('document.getElementById("exportHtmlBtn").disabled'), false, 'buttons must reflect the mode selected during export');
+
+downloads.length = renderedPages.length = removedPages.length = 0;
+await run(`
+  ensureCanvasExportLibLoaded = async () => {};
+  currentMode = 'xhs';
+  currentPreviewPage = 1;
+  markdownInput.value = ${JSON.stringify(`成功页\n${pageBreak}\n失败页\n${pageBreak}\n未开始页`)};
+  exportToPNG();
+`);
+assert.equal(downloads.length, 0, 'failed batches must not download a partial ZIP');
+assert.deepEqual(removedPages, ['成功页', '失败页'], 'failed pages must also release temporary nodes');
+assert.equal(run('isExporting'), false);
+assert.equal(run('currentPreviewPage'), 1, 'export must not navigate the preview');
+assert.equal(run('document.getElementById("exportPngBtn").disabled'), false);
+assert.equal(run('document.getElementById("exportHtmlBtn").disabled'), true);
+await run('exportToHTML()');
+assert.equal(downloads.length, 0, 'calling HTML export directly in XHS mode must also be blocked');
+
+const mergedPages = [];
+const rasterPages = [];
+const fakePdf = (node) => ({
+  output() { return node.content; },
+  save(filename) { downloads.push({ filename }); },
+});
+context.renderTestEditablePdf = async node => {
+  if (node.content === '兼容页') throw new Error('Editable text render failed');
+  return fakePdf(node);
+};
+context.renderTestRasterPdf = async node => {
+  rasterPages.push(node.content);
+  return fakePdf(node);
+};
+context.PDFLib = {
+  PDFDocument: {
+    async create() {
+      return {
+        async copyPages(pdf) { return [pdf.content]; },
+        addPage(page) { mergedPages.push(page); },
+        async save() { return new Uint8Array([1, 2, 3]); },
+      };
+    },
+    async load(content) { return { content, getPageIndices() { return [0]; } }; },
+  },
+};
+removedPages.length = 0;
+await run(`
+  ensurePdfExportLibsLoaded = async () => {};
+  ensurePdfMergeLibLoaded = async () => {};
+  replaceEChartsWithImages = async () => {};
+  exportEditablePDF = renderTestEditablePdf;
+  exportRasterPDF = renderTestRasterPdf;
+  markdownInput.value = ${JSON.stringify(`封面\n${pageBreak}\n兼容页\n${pageBreak}\n结尾`)};
+  exportToPDF();
+`);
+assert.deepEqual(mergedPages, ['封面', '兼容页', '结尾'], 'PDF must combine all pages in order, including raster fallbacks');
+assert.deepEqual(rasterPages, ['兼容页']);
+assert.deepEqual(removedPages, mergedPages);
+assert.equal(downloads.length, 1, 'PDF must download one merged document');
+assert.equal(downloads[0].blob.type, 'application/pdf');
+assert.match(downloads[0].filename, /\.pdf$/);
+assert.equal(run('currentPreviewPage'), 1);
+
+downloads.length = 0;
+await run(`setMode('free'); markdownInput.value = '单页正文'; exportToPNG();`);
+assert.equal(downloads.length, 1);
+assert.match(downloads[0].filename, /\.png$/, 'free mode must retain a standalone PNG');
+downloads.length = 0;
+await run('exportToPDF()');
+assert.equal(downloads.length, 1);
+assert.match(downloads[0].filename, /\.pdf$/, 'free mode must retain direct PDF download');
+
+// Four corner text blocks stay outside the Markdown container and accept only safe styles.
+const cornerNodes = [];
+context.testCornerPoster = createElement({
+  innerHTML: 'unchanged body',
+  querySelectorAll() { return [...cornerNodes]; },
+  appendChild(node) {
+    node.remove = () => cornerNodes.splice(cornerNodes.indexOf(node), 1);
+    cornerNodes.push(node);
+  },
+});
+run(`
+  globalThis.cornerSettings = normalizeHeaderFooterSettings({
+    'top-left': { text: '<img src=x onerror=alert(1)>', fontSize: 16, color: '#123456', font: 'serif', bold: true },
+    'top-right': { text: '品牌', fontSize: 999, color: 'invalid', font: 'invalid' },
+    'bottom-left': { text: '两行\\n页脚', fontSize: -10, italic: true },
+    'bottom-right': { text: '  ' }
+  });
+  renderHeaderFooter(testCornerPoster, cornerSettings);
+`);
+assert.equal(cornerNodes.length, 3, 'blank corners must remain hidden');
+assert.equal(cornerNodes[0].textContent, '<img src=x onerror=alert(1)>', 'corner text must be inserted literally');
+assert.equal(cornerNodes[0].innerHTML, undefined, 'corner text must never be parsed as HTML');
+assert.equal(cornerNodes[0].style.color, '#123456');
+assert.equal(cornerNodes[0].style.fontSize, '16px');
+assert.equal(cornerNodes[0].style.fontWeight, '700');
+assert.equal(cornerNodes[1].style.fontSize, '32px');
+assert.equal(cornerNodes[1].style.color, '#ffffff');
+assert.equal(cornerNodes[2].style.fontSize, '8px');
+assert.equal(cornerNodes[2].style.fontStyle, 'italic');
+assert.equal(cornerNodes[2].textContent, '两行\n页脚');
+assert.equal(run('testCornerPoster.innerHTML'), 'unchanged body', 'corner rendering must not replace Markdown content');
+run('renderHeaderFooter(testCornerPoster, normalizeHeaderFooterSettings())');
+assert.equal(cornerNodes.length, 0, 'clearing settings must remove all previous corner nodes');
+
+const savedValues = new Map();
+context.localStorage.setItem = (key, value) => savedValues.set(key, value);
+run(`currentHeaderFooter = cornerSettings; autoSave('正文');`);
+const savedSettings = JSON.parse(savedValues.get('madopic_settings'));
+assert.equal(savedSettings.headerFooter['top-left'].text, '<img src=x onerror=alert(1)>');
+assert.equal(savedSettings.headerFooter['bottom-left'].italic, true);

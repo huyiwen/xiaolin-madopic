@@ -21,13 +21,13 @@ assert.match(
 );
 assert.match(
   index,
-  /<script src="script\.js\?v=20260914-2"><\/script>/,
+  /<script src="script\.js\?v=20260914-3"><\/script>/,
   'the application script cache key must be updated with this release',
 );
 
 assert.match(
   index,
-  /<link rel="stylesheet" href="style\.css\?v=20260914-1">/,
+  /<link rel="stylesheet" href="style\.css\?v=20260914-2">/,
   'the stylesheet cache key must be updated with this release',
 );
 
@@ -96,7 +96,7 @@ assert.match(
 );
 assert.match(
   script,
-  /pdf\.save\(`madopic-\$\{getFormattedTimestamp\(\)\}\.pdf`\)/,
+  /singlePdf\.save\(`\$\{snapshot\.filename\}\.pdf`\)/,
   'PDF export must download directly without a print dialog',
 );
 assert.ok(!script.includes('printWindow.print()'), 'PDF export must not open the browser print dialog');
