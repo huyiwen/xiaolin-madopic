@@ -322,6 +322,59 @@ function loadSettings() {
 }
 
 // ===== 数学公式渲染器 =====
+const MATH_DELIMITERS = [
+    { left: '$$', right: '$$', display: true },
+    { left: '$', right: '$', display: false },
+    { left: '\\[', right: '\\]', display: true },
+    { left: '\\(', right: '\\)', display: false }
+];
+
+function readMathExpression(source) {
+    const delimiter = MATH_DELIMITERS.find(({ left }) => source.startsWith(left));
+    if (!delimiter) return;
+    let braces = 0;
+    for (let index = delimiter.left.length; index < source.length; index++) {
+        if (!delimiter.display && source[index] === '\n') return;
+        if (braces === 0 && source.startsWith(delimiter.right, index)) {
+            return { raw: source.slice(0, index + delimiter.right.length), display: delimiter.display };
+        }
+        if (source[index] === '\\') index++;
+        else if (source[index] === '{') braces++;
+        else if (source[index] === '}') braces = Math.max(0, braces - 1);
+    }
+}
+
+// 在 Markdown 的斜体、转义和换行规则之前识别公式，保留完整的 LaTeX 文本。
+// 代码块和行内代码仍由 Marked 自己解析，不会转换为公式。
+function setupMarkdownMath() {
+    marked.use({ extensions: [
+        {
+            name: 'madopicBlockMath',
+            level: 'block',
+            start(source) { return source.match(/(?:^|\n) {0,3}(?:\$\$|\\\[)/)?.index; },
+            tokenizer(source) {
+                const indent = source.match(/^ {0,3}/)[0].length;
+                const math = readMathExpression(source.slice(indent));
+                if (!math?.display) return;
+                const end = source.slice(indent + math.raw.length).match(/^[\t ]*(?:\n|$)/);
+                if (!end) return;
+                return { type: 'madopicBlockMath', raw: source.slice(0, indent + math.raw.length + end[0].length), text: math.raw };
+            },
+            renderer(token) { return `<div class="math-source">${escapeHtml(token.text)}</div>\n`; }
+        },
+        {
+            name: 'madopicInlineMath',
+            level: 'inline',
+            start(source) { return source.search(/\$|\\(?:\(|\[)/); },
+            tokenizer(source) {
+                const math = readMathExpression(source);
+                if (math) return { type: 'madopicInlineMath', raw: math.raw, text: math.raw };
+            },
+            renderer(token) { return `<span class="math-source">${escapeHtml(token.text)}</span>`; }
+        }
+    ] });
+}
+
 function protectMarkdownSegments(markdown) {
     const segments = [];
     const protect = (text, pattern) => text.replace(pattern, (match) => {
@@ -334,8 +387,7 @@ function protectMarkdownSegments(markdown) {
     protectedText = protect(protectedText, /```[\s\S]*?```|~~~[\s\S]*?~~~/g);
     protectedText = protect(protectedText, /`[^`\n]*`/g);
     protectedText = protect(protectedText, /!?\[[^\]]*\]\([^\n)]*\)/g);
-    protectedText = protect(protectedText, /\$\$[\s\S]*?\$\$/g);
-    protectedText = protect(protectedText, /\$(?!\$)(?:\\.|[^$\n])+\$/g);
+    protectedText = protect(protectedText, /\$\$[\s\S]*?\$\$|\$(?!\$)(?:\\.|[^$\n])+\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)/g);
 
     return {
         text: protectedText,
@@ -375,12 +427,7 @@ class MathRenderer {
 
         try {
             renderMathInElement(element, {
-                delimiters: [
-                    { left: '$$', right: '$$', display: true },
-                    { left: '$', right: '$', display: false },
-                    { left: '\\[', right: '\\]', display: true },
-                    { left: '\\(', right: '\\)', display: false }
-                ],
+                delimiters: MATH_DELIMITERS,
                 throwOnError: false,
                 errorColor: '#cc0000',
                 strict: false,
@@ -812,6 +859,7 @@ class CardRenderer {
             `;
 
             element.innerHTML = cardHtml;
+            mathRenderer.renderMath(element);
 
         } catch (error) {
             console.error('卡片渲染错误:', error);
@@ -1066,6 +1114,7 @@ if (document.readyState === 'loading') {
 
 // 初始化应用
 function initializeApp() {
+    setupMarkdownMath();
     // 配置 marked 选项
     marked.setOptions({
         breaks: true,

@@ -1,0 +1,11 @@
+{
+  "name": "madopic",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "katex": "0.16.8",
+    "marked": "18.0.6"
+  }
+}

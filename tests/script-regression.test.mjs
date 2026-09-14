@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { resolve } from 'node:path';
+import { Marked } from 'marked';
+import katex from 'katex';
 
 const root = resolve(import.meta.dirname, '..');
 const source = readFileSync(resolve(root, 'script.js'), 'utf8');
@@ -145,6 +147,60 @@ assert.equal(
   '公式 $F=ma$',
   'plain-text formula shortcuts must remain supported',
 );
+
+// Exercise the real Markdown parser: underscores and TeX line breaks must reach
+// KaTeX intact, instead of becoming emphasis, escapes, or HTML line breaks.
+const stubMarked = context.marked;
+context.marked = new Marked({ breaks: true, gfm: true });
+run('setupMarkdownMath();');
+const parseMathMarkdown = markdown => run(`prepareMarkdownHTML(${JSON.stringify(markdown)})`);
+const complexSubscript = String.raw`$(o_t)_a = \sum_{b=1}^{d_k}(q_t)_b(u_t)_c$`;
+const alignedMath = String.raw`$$\begin{aligned}
+1 & 1\\
+2 & 2\\
+\end{aligned}$$`;
+for (const formula of [
+  String.raw`$(o_t)_a$`,
+  complexSubscript,
+  alignedMath,
+  String.raw`\((o_t)_a = \sum_{b=1}^{d_k}(q_t)_b(u_t)_c\)`,
+  String.raw`\[\begin{aligned}
+x_1 &= \frac{a_b}{c_d}\\
+y_2 &= \sqrt{x_1}
+\end{aligned}\]`,
+  String.raw`$$\begin{pmatrix}a_1 & b_2\\c_3 & d_4\end{pmatrix}$$`,
+  String.raw`$\text{cost: \$5} + x_{i_{j}}$`,
+  String.raw`\(E=mc^2 + π\)`,
+  String.raw`$x < y \;\&\; z > 0$`,
+]) {
+  const html = parseMathMarkdown(formula);
+  const escaped = run(`escapeHtml(${JSON.stringify(formula)})`);
+  assert.ok(html.includes(`class="math-source">${escaped}</`), `formula must remain one intact text node: ${formula}`);
+  assert.doesNotMatch(html, /<(?:em|br|strong)\b/, 'Markdown must not reinterpret TeX syntax');
+  const math = run(`readMathExpression(${JSON.stringify(formula)})`);
+  const delimiterLength = formula.startsWith('$$') || formula.startsWith('\\') ? 2 : 1;
+  assert.doesNotThrow(() => katex.renderToString(formula.slice(delimiterLength, -delimiterLength), {
+    displayMode: math.display, throwOnError: true, strict: false, trust: false,
+  }));
+}
+assert.match(parseMathMarkdown(`**加粗** 和 *斜体*，${complexSubscript}。`), /<strong>加粗<\/strong> 和 <em>斜体<\/em>/);
+assert.match(parseMathMarkdown(`前文\n${alignedMath}\n后文`), /<\/p>\s*<div class="math-source">[\s\S]*<\/div>\s*<p>后文/);
+assert.match(parseMathMarkdown(`> ${alignedMath.replaceAll('\n', '\n> ')}`), /<blockquote>\s*<div class="math-source">/);
+assert.match(parseMathMarkdown(`- ${complexSubscript}`), /<li><span class="math-source">/);
+for (const code of [
+  `\`${complexSubscript}\``,
+  `\`\`${complexSubscript}\`\``,
+  `\`\`\`latex\n${alignedMath}\n\`\`\``,
+  `~~~latex\n${alignedMath}\n~~~`,
+  `    ${complexSubscript}`,
+]) {
+  assert.doesNotMatch(parseMathMarkdown(code), /class="math-source"/, 'literal code must not render math');
+}
+assert.doesNotMatch(parseMathMarkdown(String.raw`价格 \$5 和 \$10`), /class="math-source"/, 'escaped dollars must remain literal');
+assert.match(parseMathMarkdown('$<img src=x onerror=alert(1)>$'), /&lt;img src=x onerror=alert\(1\)&gt;/, 'formula source must be escaped as text');
+assert.doesNotMatch(parseMathMarkdown('$<img src=x onerror=alert(1)>$'), /<img\b/);
+assert.match(parseMathMarkdown('未结束的 $x'), /未结束的 \$x/, 'unfinished input must remain visible');
+context.marked = stubMarked;
 
 const pageBreak = '<!--madopic-new-page-->';
 const splitPages = (markdown) => Array.from(run(`splitMarkdownPages(${JSON.stringify(markdown)})`));
