@@ -76,6 +76,7 @@ function normalizeHeaderFooterSettings(settings = {}) {
             fontSize: Number.isFinite(fontSize) ? Math.max(8, Math.min(32, fontSize)) : 12,
             color: /^#[0-9a-f]{6}$/i.test(value.color) ? value.color : '#ffffff',
             font: Object.hasOwn(HEADER_FOOTER_FONTS, value.font) ? value.font : 'sans',
+            pageNumber: ['current', 'total', 'label'].includes(value.pageNumber) ? value.pageNumber : 'none',
             bold: value.bold === true,
             italic: value.italic === true
         }];
@@ -1037,6 +1038,7 @@ function updatePreviewPagination(markdown) {
     pageIndicator.textContent = `第 ${currentPreviewPage + 1} / ${previewPages.length} 页`;
     prevPageButton.disabled = currentPreviewPage === 0;
     nextPageButton.disabled = currentPreviewPage === previewPages.length - 1;
+    renderHeaderFooter(markdownPoster, headerFooterDraft || currentHeaderFooter);
 }
 
 function changePreviewPage(offset) {
@@ -1617,14 +1619,25 @@ function closeAllPanels() {
     document.body.style.overflow = '';
 }
 
-function renderHeaderFooter(poster, settings = currentHeaderFooter) {
+function formatHeaderFooterText(value, pageNumber, totalPages) {
+    const formats = {
+        current: `${pageNumber}`,
+        total: `${pageNumber} / ${totalPages}`,
+        label: `第 ${pageNumber} / ${totalPages} 页`
+    };
+    const number = formats[value.pageNumber] || '';
+    return value.text.trim() && number ? `${value.text} · ${number}` : (number || value.text);
+}
+
+function renderHeaderFooter(poster, settings = currentHeaderFooter, pageNumber = currentPreviewPage + 1, totalPages = previewPages.length) {
     poster.querySelectorAll('.poster-corner').forEach(element => element.remove());
     Object.entries(settings).forEach(([corner, value]) => {
-        if (!value.text.trim()) return;
+        const content = formatHeaderFooterText(value, pageNumber, totalPages);
+        if (!content.trim()) return;
         const text = document.createElement('div');
         text.className = `poster-corner poster-corner-${corner}`;
         text.dataset.corner = corner;
-        text.textContent = value.text;
+        text.textContent = content;
         Object.assign(text.style, {
             fontSize: `${value.fontSize}px`,
             color: value.color,
@@ -1642,7 +1655,13 @@ function setupHeaderFooterPanel() {
         <fieldset class="corner-settings" data-corner="${corner}">
             <legend>${label}</legend>
             <label for="${corner}-text">文字内容</label>
-            <textarea id="${corner}-text" data-field="text" rows="2" placeholder="留空则不显示"></textarea>
+            <textarea id="${corner}-text" data-field="text" rows="2" placeholder="留空可仅显示页码"></textarea>
+            <label class="corner-page-number">页码<select data-field="pageNumber" aria-label="${label}页码">
+                <option value="none">不显示</option>
+                <option value="current">当前页：1</option>
+                <option value="total">页码 / 总页数：1 / 3</option>
+                <option value="label">第 1 / 3 页</option>
+            </select></label>
             <div class="corner-style-controls">
                 <label>字体<select data-field="font" aria-label="${label}字体">
                     <option value="sans">无衬线</option><option value="serif">衬线</option><option value="mono">等宽</option>
@@ -1923,6 +1942,7 @@ function createExportSnapshot() {
         mode: currentMode,
         pages: pages.map(replaceImageDataForPreview),
         template: createExportTemplate(),
+        headerFooter: normalizeHeaderFooterSettings(headerFooterDraft || currentHeaderFooter),
         filename: `madopic-${getFormattedTimestamp()}`
     };
 }
@@ -1942,6 +1962,7 @@ async function createExactExportNode(snapshot = null, pageIndex = 0) {
     try {
         const content = clone.querySelector('.poster-content');
         if (snapshot && content) content.innerHTML = prepareMarkdownHTML(snapshot.pages[pageIndex]);
+        if (snapshot) renderHeaderFooter(clone, snapshot.headerFooter, pageIndex + 1, snapshot.pages.length);
         document.body.appendChild(clone);
 
         // 为导出节点重新渲染数学公式
@@ -2792,7 +2813,19 @@ function getNotificationColor(type) {
 }
 
 // ===== 键盘快捷键 =====
+function handlePreviewPageKeydown(event) {
+    if (currentMode !== 'xhs' || !['ArrowLeft', 'ArrowRight'].includes(event.key)
+        || event.defaultPrevented || event.isComposing || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+    // 保留文字光标、表单控件和弹窗中的方向键操作。
+    const target = event.target;
+    if (overlay.classList.contains('active') || target?.isContentEditable
+        || target?.closest?.('input, textarea, select, [role="textbox"], [role="slider"], [role="combobox"], [role="spinbutton"]')) return;
+    event.preventDefault();
+    return changePreviewPage(event.key === 'ArrowLeft' ? -1 : 1);
+}
+
 function setupKeyboardShortcuts() {
+    document.addEventListener('keydown', handlePreviewPageKeydown);
     document.addEventListener('keydown', function (e) {
         if (e.ctrlKey || e.metaKey) {
             switch (e.key) {

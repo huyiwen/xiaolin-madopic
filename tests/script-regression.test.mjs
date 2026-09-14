@@ -328,6 +328,7 @@ assert.equal(
 );
 
 // Export a complete snapshot even when the user starts on page two and edits during export.
+const exportPageRenderer = run('createExactExportNode');
 const downloads = [];
 const zipEntries = [];
 const renderedPages = [];
@@ -485,3 +486,85 @@ run(`currentHeaderFooter = cornerSettings; autoSave('正文');`);
 const savedSettings = JSON.parse(savedValues.get('madopic_settings'));
 assert.equal(savedSettings.headerFooter['top-left'].text, '<img src=x onerror=alert(1)>');
 assert.equal(savedSettings.headerFooter['bottom-left'].italic, true);
+
+// Page numbers update with preview pagination, including pages with no other corner text.
+run(`
+  globalThis.numberSettings = normalizeHeaderFooterSettings({
+    'top-left': { text: '笔记', pageNumber: 'current' },
+    'top-right': { pageNumber: 'invalid' },
+    'bottom-left': { pageNumber: 'label' },
+    'bottom-right': { pageNumber: 'total' }
+  });
+  renderHeaderFooter(testCornerPoster, numberSettings, 2, 3);
+`);
+assert.deepEqual(cornerNodes.map(node => node.textContent), ['笔记 · 2', '第 2 / 3 页', '2 / 3']);
+assert.equal(run('numberSettings["top-right"].pageNumber'), 'none');
+const previewCornerNodes = [];
+const livePoster = run('markdownPoster');
+livePoster.querySelectorAll = () => [...previewCornerNodes];
+livePoster.appendChild = node => {
+  node.remove = () => previewCornerNodes.splice(previewCornerNodes.indexOf(node), 1);
+  previewCornerNodes.push(node);
+};
+run(`
+  currentMode = 'xhs';
+  currentPreviewPage = 2;
+  currentHeaderFooter = numberSettings;
+  updatePreviewPagination(${JSON.stringify(`甲\n${pageBreak}\n乙`)});
+`);
+assert.deepEqual(previewCornerNodes.map(node => node.textContent), ['笔记 · 2', '第 2 / 2 页', '2 / 2']);
+run('currentMode = "free"; updatePreviewPagination("全文");');
+assert.deepEqual(previewCornerNodes.map(node => node.textContent), ['笔记 · 1', '第 1 / 1 页', '1 / 1']);
+
+// Export each page with its own number and the saved settings, not the live preview's values.
+const exportedCorners = [];
+const exportContent = createElement();
+const exportPoster = createElement({
+  querySelector() { return exportContent; },
+  appendChild(node) { exportedCorners.push(node); },
+});
+const numberSnapshot = {
+  pages: ['甲', '乙', '丙'],
+  template: { cloneNode() { return exportPoster; } },
+  headerFooter: run('normalizeHeaderFooterSettings(numberSettings)'),
+};
+run('currentHeaderFooter = normalizeHeaderFooterSettings(); currentPreviewPage = 0;');
+await exportPageRenderer(numberSnapshot, 1);
+assert.deepEqual(exportedCorners.map(node => node.textContent), ['笔记 · 2', '第 2 / 3 页', '2 / 3']);
+assert.equal(exportContent.innerHTML, '乙');
+
+// Arrow keys navigate only outside text editing and settings dialogs.
+const handlePageKey = run('handlePreviewPageKeydown');
+let preventedKeys = 0;
+const pageKey = overrides => ({
+  key: 'ArrowRight',
+  target: { closest() { return null; } },
+  preventDefault() { preventedKeys++; },
+  ...overrides,
+});
+run(`currentMode = 'xhs'; currentPreviewPage = 0; markdownInput.value = ${JSON.stringify(`甲\n${pageBreak}\n乙`)};`);
+await handlePageKey(pageKey());
+assert.equal(run('currentPreviewPage'), 1);
+await handlePageKey(pageKey());
+assert.equal(run('currentPreviewPage'), 1, 'right arrow must stop at the last page');
+await handlePageKey(pageKey({ key: 'ArrowLeft' }));
+assert.equal(run('currentPreviewPage'), 0);
+for (const overrides of [
+  { target: { closest() { return {}; } } },
+  { target: { isContentEditable: true } },
+  { ctrlKey: true }, { metaKey: true }, { altKey: true }, { shiftKey: true },
+  { isComposing: true }, { defaultPrevented: true }, { key: 'ArrowDown' },
+]) {
+  const count = preventedKeys;
+  await handlePageKey(pageKey(overrides));
+  assert.equal(run('currentPreviewPage'), 0);
+  assert.equal(preventedKeys, count, 'editing and modified keys must keep their native behavior');
+}
+const modalOverlay = run('overlay');
+modalOverlay.classList.contains = () => true;
+await handlePageKey(pageKey());
+assert.equal(run('currentPreviewPage'), 0, 'open settings dialogs must suspend arrow navigation');
+modalOverlay.classList.contains = () => false;
+run('currentMode = "free";');
+await handlePageKey(pageKey());
+assert.equal(run('currentPreviewPage'), 0, 'free mode must keep its arrow key behavior');

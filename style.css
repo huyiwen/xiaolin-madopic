@@ -964,6 +964,20 @@ select {
     gap: 8px;
 }
 
+.corner-page-number {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.corner-page-number select {
+    flex: 1;
+    min-width: 0;
+    padding: 6px;
+    font-size: 12px;
+}
+
 .corner-style-controls input,
 .corner-style-controls select {
     display: block;

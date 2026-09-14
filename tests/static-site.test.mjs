@@ -21,13 +21,13 @@ assert.match(
 );
 assert.match(
   index,
-  /<script src="script\.js\?v=20260914-3"><\/script>/,
+  /<script src="script\.js\?v=20260914-4"><\/script>/,
   'the application script cache key must be updated with this release',
 );
 
 assert.match(
   index,
-  /<link rel="stylesheet" href="style\.css\?v=20260914-2">/,
+  /<link rel="stylesheet" href="style\.css\?v=20260914-3">/,
   'the stylesheet cache key must be updated with this release',
 );
 
