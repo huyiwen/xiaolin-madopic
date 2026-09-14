@@ -27,7 +27,7 @@
     <meta name="twitter:title" content="Madopic - Markdown to Picture">
     <meta name="twitter:description" content="Markdown 海报生成工具，支持社交媒体长图、数学公式、Mermaid、ECharts 和多格式导出。">
     <meta name="twitter:image" content="https://madopic.thus.chat/favicon.svg">
-    <link rel="stylesheet" href="style.css?v=20260715-2">
+    <link rel="stylesheet" href="style.css?v=20260914-1">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <!-- KaTeX CSS -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
@@ -148,6 +148,9 @@
                         <button class="tool-btn" data-action="image" title="插入图片">
                             <i class="fas fa-image"></i>
                         </button>
+                        <button class="tool-btn" data-action="page-break" title="插入分页" aria-label="插入分页">
+                            <i class="fas fa-file-alt" aria-hidden="true"></i>
+                        </button>
                         <div class="tool-separator"></div>
                         <button class="tool-btn" data-action="flowchart" title="插入流程图">
                             <i class="fas fa-project-diagram"></i>
@@ -234,6 +237,15 @@
                         <button class="tool-btn" id="zoomIn" title="放大">
                             <i class="fas fa-search-plus"></i>
                         </button>
+                        <div class="page-controls" id="pageControls" role="group" aria-label="预览翻页" hidden>
+                            <button class="tool-btn" id="prevPage" title="上一页" aria-label="上一页" disabled>
+                                <i class="fas fa-chevron-left" aria-hidden="true"></i>
+                            </button>
+                            <span class="page-indicator" id="pageIndicator" aria-live="polite" aria-atomic="true" title="独占一行输入 &lt;!--madopic-new-page--&gt; 可手动分页；导出当前预览页">第 1 / 1 页</span>
+                            <button class="tool-btn" id="nextPage" title="下一页" aria-label="下一页" disabled>
+                                <i class="fas fa-chevron-right" aria-hidden="true"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
                 <div class="preview-container" id="previewContainer">
@@ -347,7 +359,7 @@
         <div class="overlay" id="overlay"></div>
     </div>
 
-    <script src="script.js?v=20260716-2"></script>
+    <script src="script.js?v=20260914-2"></script>
     <noscript>Madopic 是由 XIAOLIN AI LAB 出品的 Markdown to picture 在线工具，可将 Markdown 内容制作成图片海报、社交媒体长图、知识卡片、技术文档图和公式图表海报。</noscript>
 </body>
 

@@ -244,10 +244,40 @@ body {
 
 .preview-panel .panel-header {
     padding-right: 20px;
+    padding-block: 7px;
+    height: auto;
+    min-height: 44px;
+    flex-wrap: wrap;
+    gap: 8px;
 }
 
 .preview-tools {
     gap: 4px;
+    flex-wrap: wrap;
+    margin-left: auto;
+}
+
+.page-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 4px;
+    padding-left: 8px;
+    border-left: 1px solid var(--border-primary);
+}
+
+.page-controls[hidden] {
+    display: none;
+}
+
+.page-indicator {
+    min-width: 68px;
+    text-align: center;
+    white-space: nowrap;
+    font-size: 11px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-tertiary);
 }
 
 .tool-btn {
@@ -268,6 +298,13 @@ body {
 .tool-btn:hover {
     background: var(--background-tertiary);
     color: var(--text-secondary);
+}
+
+.page-controls .tool-btn:disabled {
+    opacity: 0.35;
+    cursor: default;
+    background: transparent;
+    color: var(--text-tertiary);
 }
 
 .zoom-level {

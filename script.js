@@ -838,6 +838,10 @@ const backgroundPanel = document.getElementById('backgroundPanel');
 const layoutPanel = document.getElementById('layoutPanel');
 const overlay = document.getElementById('overlay');
 const zoomLevel = document.querySelector('.zoom-level');
+const pageControls = document.getElementById('pageControls');
+const pageIndicator = document.getElementById('pageIndicator');
+const prevPageButton = document.getElementById('prevPage');
+const nextPageButton = document.getElementById('nextPage');
 
 // 图片数据存储（使用 Map 提供更好的性能）
 const imageDataStore = new Map();
@@ -951,7 +955,58 @@ const ImageCache = {
 
 // 预览渲染状态
 let hasInitialPreviewRendered = false;
-let lastRenderedMarkdown = '';
+let lastPreviewKey = null;
+let previewRenderVersion = 0;
+let previewRenderPromise = Promise.resolve();
+let previewPages = [''];
+let currentPreviewPage = 0;
+
+// 分页符必须独占一行；代码块里的示例保持原样，不参与分页。
+function splitMarkdownPages(markdown) {
+    const pages = [];
+    let lines = [];
+    let fence = null;
+
+    for (const line of markdown.split(/\r\n|\n|\r/)) {
+        const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+        if (fence) {
+            if (fenceMatch && fenceMatch[1][0] === fence[0]
+                && fenceMatch[1].length >= fence.length && !fenceMatch[2].trim()) {
+                fence = null;
+            }
+        } else if (fenceMatch && (fenceMatch[1][0] === '~' || !fenceMatch[2].includes('`'))) {
+            fence = fenceMatch[1];
+        } else if (/^ {0,3}<!--madopic-new-page-->[\t ]*$/.test(line)) {
+            const content = lines.join('\n');
+            if (content.trim()) pages.push(content);
+            lines = [];
+            continue;
+        }
+        lines.push(line);
+    }
+
+    const content = lines.join('\n');
+    if (content.trim()) pages.push(content);
+    return pages.length ? pages : [''];
+}
+
+function updatePreviewPagination(markdown) {
+    previewPages = currentMode === 'xhs' ? splitMarkdownPages(markdown) : [markdown];
+    currentPreviewPage = Math.max(0, Math.min(currentPreviewPage, previewPages.length - 1));
+    pageControls.hidden = currentMode !== 'xhs';
+    pageIndicator.textContent = `第 ${currentPreviewPage + 1} / ${previewPages.length} 页`;
+    prevPageButton.disabled = currentPreviewPage === 0;
+    nextPageButton.disabled = currentPreviewPage === previewPages.length - 1;
+}
+
+function changePreviewPage(offset) {
+    if (currentMode !== 'xhs') return;
+    // 翻页前同步输入，避免编辑去抖期间使用旧的页数。
+    updatePreviewPagination(markdownInput.value);
+    currentPreviewPage = Math.max(0, Math.min(currentPreviewPage + offset, previewPages.length - 1));
+    document.getElementById('previewContainer').scrollTop = 0;
+    return updatePreview();
+}
 
 // 初始化应用
 async function bootstrapApp() {
@@ -1014,6 +1069,8 @@ function setupEventListeners() {
     // 缩放控制
     document.getElementById('zoomIn').addEventListener('click', zoomIn);
     document.getElementById('zoomOut').addEventListener('click', zoomOut);
+    prevPageButton.addEventListener('click', () => changePreviewPage(-1));
+    nextPageButton.addEventListener('click', () => changePreviewPage(1));
 
     // 背景设置面板
     document.getElementById('backgroundBtn').addEventListener('click', openBackgroundPanel);
@@ -1080,6 +1137,7 @@ function setupModeButtons() {
 
 function setMode(mode) {
     if (!['free', 'xhs', 'pyq'].includes(mode)) return;
+    if (currentMode !== mode) currentPreviewPage = 0;
     currentMode = mode;
     // 切换按钮激活态
     const group = document.getElementById('modeGroup');
@@ -1088,8 +1146,14 @@ function setMode(mode) {
             btn.classList.toggle('active', btn.getAttribute('data-mode') === mode);
         });
     }
-    // 预览区域视觉反馈（仅预览容器外层，不改导出逻辑）
+    // 切换模式后同时更新画布比例和分页内容。
     applyPreviewModeFrame();
+    return updatePreview();
+}
+
+// 使用布局宽度，避免预览缩放影响画布比例和导出尺寸。
+function getUnscaledWidth(element) {
+    return element.offsetWidth || element.getBoundingClientRect().width;
 }
 
 function applyPreviewModeFrame() {
@@ -1097,8 +1161,7 @@ function applyPreviewModeFrame() {
     markdownPoster.dataset.mode = currentMode;
     if (currentMode === 'xhs') {
         // 3:4（宽:高） => 高度 = 宽度 / 3 * 4。由于 width 是含 padding 的可视宽度，这里与导出一致
-        const rect = markdownPoster.getBoundingClientRect();
-        const targetHeight = Math.round((rect.width / 3) * 4);
+        const targetHeight = Math.round((getUnscaledWidth(markdownPoster) / 3) * 4);
         markdownPoster.style.height = `${targetHeight}px`;
         markdownPoster.style.minHeight = `${targetHeight}px`;
         markdownPoster.style.overflow = 'hidden'; // 超出裁掉
@@ -1113,8 +1176,7 @@ function applyPreviewModeFrame() {
     } else if (currentMode === 'pyq') {
         // 朋友圈固定比例：1290x2796 ≈ 宽:高 = 1290:2796。
         // 在保持当前外层宽度不变的前提下，按该比例计算高度。
-        const rect = markdownPoster.getBoundingClientRect();
-        const targetHeight = Math.round(rect.width * (2796 / 1290));
+        const targetHeight = Math.round(getUnscaledWidth(markdownPoster) * (2796 / 1290));
         markdownPoster.style.height = `${targetHeight}px`;
         markdownPoster.style.minHeight = `${targetHeight}px`;
         markdownPoster.style.overflow = 'hidden';
@@ -1204,6 +1266,10 @@ function handleToolbarAction(action) {
         case 'image':
             insertImage();
             return;
+        case 'page-break':
+            insertText = '\n\n<!--madopic-new-page-->\n\n';
+            cursorPos = start + insertText.length;
+            break;
         case 'flowchart':
             MarkdownHelper.insertFlowchart();
             return;
@@ -1248,20 +1314,32 @@ function handleToolbarAction(action) {
 }
 
 // 更新预览
-async function updatePreview() {
-    const markdownText = markdownInput.value.trim();
+function updatePreview() {
     // 同步行号（在去抖预览之外也保证立即更新）
     updateLineNumbers();
 
     // 自动保存草稿
     autoSave(markdownInput.value);
 
+    updatePreviewPagination(markdownInput.value);
+    const markdownText = previewPages[currentPreviewPage].trim();
+    const previewKey = JSON.stringify([currentMode, currentPreviewPage, markdownText]);
+    if (previewKey === lastPreviewKey) return previewRenderPromise;
+    lastPreviewKey = previewKey;
+    const renderVersion = ++previewRenderVersion;
+    echartsRenderer.destroyAll(posterContent);
+
     // 检查是否为空内容
     if (!markdownText) {
         showEmptyPreview();
-        return;
+        previewRenderPromise = Promise.resolve();
+    } else {
+        previewRenderPromise = renderPreviewPage(markdownText, renderVersion);
     }
+    return previewRenderPromise;
+}
 
+async function renderPreviewPage(markdownText, renderVersion) {
     // 预处理数学公式
     let processedMarkdown = mathRenderer.preprocessMath(markdownText);
 
@@ -1276,12 +1354,6 @@ async function updatePreview() {
 
     // 替换简化的base64为完整版本进行预览
     processedMarkdown = replaceImageDataForPreview(processedMarkdown);
-
-    // 仅在已完成至少一次渲染后，且内容确实未变化时跳过
-    if (hasInitialPreviewRendered && processedMarkdown === lastRenderedMarkdown) {
-        return;
-    }
-    lastRenderedMarkdown = processedMarkdown;
 
     let htmlContent = '';
     try {
@@ -1301,13 +1373,19 @@ async function updatePreview() {
     mathRenderer.renderMath(posterContent);
 
     // 渲染图表
+    posterContent.querySelectorAll('.mermaid-container').forEach((container, index) => {
+        container.setAttribute('data-diagram-id', `preview-mermaid-${renderVersion}-${index}`);
+    });
     await diagramRenderer.renderDiagrams(posterContent);
+    if (renderVersion !== previewRenderVersion) return;
 
     // 渲染 ECharts 图表
     await echartsRenderer.renderECharts(posterContent);
+    if (renderVersion !== previewRenderVersion) return;
 
     // 渲染卡片
     await cardRenderer.renderCards(posterContent);
+    if (renderVersion !== previewRenderVersion) return;
 
     // 代码高亮（Prism.js）
     if (typeof Prism !== 'undefined') {
@@ -1602,6 +1680,8 @@ function setupSliders() {
  * 返回被追加到 body 的节点，调用方负责移除。
  */
 async function createExactExportNode() {
+    // 包含刚输入或刚翻到的页面，并等待其公式、图表完成渲染。
+    await updatePreview();
     const clone = markdownPoster.cloneNode(true);
     clone.id = 'madopic-export-poster';
     const mpComputed = getComputedStyle(markdownPoster);
@@ -1610,7 +1690,7 @@ async function createExactExportNode() {
         top: '-9999px',
         left: '-9999px',
         margin: '0',
-        width: `${markdownPoster.getBoundingClientRect().width}px`,
+        width: `${getUnscaledWidth(markdownPoster)}px`,
         padding: mpComputed.padding,
         boxSizing: 'border-box',
         background: markdownPoster.style.background || mpComputed.background,
@@ -1621,7 +1701,7 @@ async function createExactExportNode() {
     if (inner) {
         const pcComputed = getComputedStyle(posterContent);
         inner.style.animation = 'none';
-        inner.style.width = `${posterContent.getBoundingClientRect().width}px`;
+        inner.style.width = `${getUnscaledWidth(posterContent)}px`;
         inner.style.padding = pcComputed.padding;
         inner.style.boxSizing = 'border-box';
         inner.style.backdropFilter = pcComputed.backdropFilter || 'none';
@@ -1629,8 +1709,7 @@ async function createExactExportNode() {
     }
     // 固定高度模式：小红书 3:4。导出时必须与预览一致，且裁掉超出部分
     if (currentMode === 'xhs') {
-        const rect = markdownPoster.getBoundingClientRect();
-        const target = Math.round((rect.width / 3) * 4);
+        const target = Math.round((getUnscaledWidth(markdownPoster) / 3) * 4);
         clone.style.height = `${target}px`;
         clone.style.minHeight = `${target}px`;
         clone.style.overflow = 'hidden';
@@ -1646,8 +1725,7 @@ async function createExactExportNode() {
             inner.style.overflow = 'hidden';
         }
     } else if (currentMode === 'pyq') {
-        const rect = markdownPoster.getBoundingClientRect();
-        const target = Math.round(rect.width * (2796 / 1290));
+        const target = Math.round(getUnscaledWidth(markdownPoster) * (2796 / 1290));
         clone.style.height = `${target}px`;
         clone.style.minHeight = `${target}px`;
         clone.style.overflow = 'hidden';
