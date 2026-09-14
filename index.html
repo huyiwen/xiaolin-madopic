@@ -12,7 +12,7 @@
     <meta name="robots" content="index, follow">
     <meta name="theme-color" content="#6366f1">
     <meta name="referrer" content="strict-origin-when-cross-origin">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://umami.thus.chat; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; font-src 'self' data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; img-src 'self' data: blob: https:; connect-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://umami.thus.chat https://images.weserv.nl https://raw.githubusercontent.com; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'self'; upgrade-insecure-requests">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://umami.thus.chat; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; font-src 'self' data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; img-src 'self' data: blob: https:; connect-src 'self' blob: https:; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'self'; upgrade-insecure-requests">
     <link rel="canonical" href="https://madopic.thus.chat/">
     <link rel="alternate" type="text/markdown" href="https://madopic.thus.chat/index.md">
     <link rel="icon" type="image/svg+xml" href="favicon.svg?v=20260119">
@@ -119,6 +119,9 @@
                 </button>
                 <button class="btn btn-primary" id="exportHtmlBtn">
                     <i class="fas fa-file-code"></i> 导出HTML
+                </button>
+                <button class="btn btn-primary" id="exportMarkdownBtn">
+                    <i class="fab fa-markdown" aria-hidden="true"></i> 导出Markdown
                 </button>
                 <a href="https://github.com/xiaolinbaba/Madopic" target="_blank" rel="noopener noreferrer" class="github-link" title="查看GitHub源码">
                     <i class="fab fa-github"></i>
@@ -375,7 +378,7 @@
         <div class="overlay" id="overlay"></div>
     </div>
 
-    <script src="script.js?v=20260914-5"></script>
+    <script src="script.js?v=20260914-6"></script>
     <noscript>Madopic 是由 XIAOLIN AI LAB 出品的 Markdown to picture 在线工具，可将 Markdown 内容制作成图片海报、社交媒体长图、知识卡片、技术文档图和公式图表海报。</noscript>
 </body>
 

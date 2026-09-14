@@ -21,7 +21,7 @@ assert.match(
 );
 assert.match(
   index,
-  /<script src="script\.js\?v=20260914-5"><\/script>/,
+  /<script src="script\.js\?v=20260914-6"><\/script>/,
   'the application script cache key must be updated with this release',
 );
 
@@ -100,4 +100,5 @@ assert.match(
   'PDF export must download directly without a print dialog',
 );
 assert.ok(!script.includes('printWindow.print()'), 'PDF export must not open the browser print dialog');
-assert.match(index, /connect-src[^;]*https:\/\/raw\.githubusercontent\.com/, 'CSP must allow the PDF font request');
+assert.match(index, /connect-src[^;]*\bhttps:/, 'CSP must allow HTTPS image downloads and the PDF font request');
+assert.match(index, /connect-src[^;]*\bblob:/, 'CSP must allow reading local Blob images for Markdown export');

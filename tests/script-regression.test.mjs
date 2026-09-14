@@ -4,6 +4,8 @@ import vm from 'node:vm';
 import { resolve } from 'node:path';
 import { Marked } from 'marked';
 import katex from 'katex';
+import { fromMarkdown } from 'mdast-util-from-markdown';
+import JSZip from 'jszip';
 
 const root = resolve(import.meta.dirname, '..');
 const source = readFileSync(resolve(root, 'script.js'), 'utf8');
@@ -624,3 +626,104 @@ modalOverlay.classList.contains = () => false;
 run('currentMode = "free";');
 await handlePageKey(pageKey());
 assert.equal(run('currentPreviewPage'), 0, 'free mode must keep its arrow key behavior');
+
+// Markdown archives use real Markdown source offsets and a real ZIP writer.
+context.JSZip = JSZip;
+context.archiveParser = fromMarkdown;
+context.atob = atob;
+context.TextEncoder = TextEncoder;
+context.AbortController = AbortController;
+const originalArchiveImageLoader = run('loadMarkdownArchiveImage');
+const pngData = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==';
+const svgText = '<svg xmlns="http://www.w3.org/2000/svg"><text>图片</text></svg>';
+const jpegData = 'data:image/jpeg;base64,/9j/2Q==';
+const assetRequests = [];
+context.fetch = async (url, options) => {
+  assetRequests.push(url);
+  assert.equal(options.credentials, 'omit');
+  assert.equal(options.referrerPolicy, 'no-referrer');
+  if (url.includes('broken.test')) return { ok: false, status: 404 };
+  return { ok: true, blob: async () => new Blob([svgText], { type: 'image/svg+xml' }) };
+};
+const mdFixture = [
+  '# Markdown 归档',
+  '![本地](madopic-image://archive-local "原图")',
+  '![重复](madopic-image://archive-copy)',
+  `![内嵌](${pngData})`,
+  '![引用][PIC]',
+  '[查看原图][PIC]',
+  '',
+  `[PIC]: ${jpegData} '图片标题'`,
+  pageBreak,
+  complexSubscript,
+  alignedMath,
+  '![网络](./diagram.svg?x=1&y=2)',
+  '![失效](madopic-image://missing)',
+  '`![代码](madopic-image://archive-local)`',
+  '```markdown',
+  '![代码](madopic-image://archive-local)',
+  '```',
+  '结束。',
+].join('\r\n');
+downloads.length = 0;
+run(`
+  loadMarkdownArchiveParser = () => new Promise(resolve => { globalThis.finishMarkdownParser = () => resolve(archiveParser); });
+  imageDataStore.set('madopic-image://archive-local', ${JSON.stringify(pngData)});
+  imageDataStore.set('madopic-image://archive-copy', ${JSON.stringify(pngData)});
+  imageDataStore.set('madopic-image://unused', ${JSON.stringify(jpegData)});
+  currentMode = 'xhs'; currentPreviewPage = 1;
+  markdownInput.value = ${JSON.stringify(mdFixture)};
+  globalThis.pendingMarkdownExport = exportToMarkdown();
+`);
+assert.equal(run('document.getElementById("exportMarkdownBtn").disabled'), true);
+assert.equal(run('document.getElementById("exportPngBtn").disabled'), true);
+await run('exportToMarkdown()');
+run(`markdownInput.value = '后续编辑'; imageDataStore.set('madopic-image://archive-local', ${JSON.stringify(jpegData)}); finishMarkdownParser();`);
+await run('pendingMarkdownExport');
+assert.equal(downloads.length, 1);
+assert.match(downloads[0].filename, /-markdown\.zip$/);
+const archive = await JSZip.loadAsync(await downloads[0].blob.arrayBuffer());
+assert.deepEqual(Object.keys(archive.files).filter(name => !name.endsWith('/')).sort(), [
+  'document.md', 'export-notes.txt', 'images/image-001.png', 'images/image-002.jpg', 'images/image-003.svg',
+]);
+const archivedMarkdown = await archive.file('document.md').async('string');
+assert.ok(archivedMarkdown.startsWith('# Markdown 归档\r\n'));
+assert.ok(archivedMarkdown.includes(`\r\n${pageBreak}\r\n${complexSubscript}\r\n${alignedMath}\r\n`));
+assert.ok(archivedMarkdown.includes('![本地](images/image-001.png "原图")'));
+assert.ok(archivedMarkdown.includes('![重复](images/image-001.png)'));
+assert.ok(archivedMarkdown.includes('![内嵌](images/image-001.png)'));
+assert.ok(archivedMarkdown.includes('![引用][PIC]\r\n[查看原图][PIC]\r\n\r\n[PIC]: images/image-002.jpg "图片标题"'));
+assert.ok(archivedMarkdown.includes('![网络](images/image-003.svg)'));
+assert.ok(archivedMarkdown.includes('![失效](madopic-image://missing)'));
+assert.ok(archivedMarkdown.includes('`![代码](madopic-image://archive-local)`'));
+assert.ok(archivedMarkdown.includes('```markdown\r\n![代码](madopic-image://archive-local)\r\n```'));
+assert.deepEqual(await archive.file('images/image-001.png').async('nodebuffer'), Buffer.from(pngData.split(',')[1], 'base64'));
+assert.equal(await archive.file('images/image-003.svg').async('string'), svgText);
+assert.match(await archive.file('export-notes.txt').async('string'), /madopic-image:\/\/missing/);
+assert.equal(run('markdownInput.value'), '后续编辑');
+assert.equal(run('currentPreviewPage'), 1);
+assert.equal(run('document.getElementById("exportMarkdownBtn").disabled'), false, 'Markdown remains available in XHS mode');
+assert.equal(run('document.getElementById("exportHtmlBtn").disabled'), true);
+assert.deepEqual(assetRequests, ['https://madopic.test/diagram.svg?x=1&y=2']);
+const svgBlob = await originalArchiveImageLoader(`data:image/svg+xml,${encodeURIComponent(svgText)}`);
+assert.equal(await svgBlob.text(), svgText, 'URL-encoded SVG data must retain Unicode');
+
+// Failed network images are reported honestly and retain working source syntax.
+downloads.length = assetRequests.length = 0;
+await run(`loadMarkdownArchiveParser = async () => archiveParser; markdownInput.value = '![图片](https://broken.test/photo.png)'; exportToMarkdown();`);
+const failedArchive = await JSZip.loadAsync(await downloads[0].blob.arrayBuffer());
+assert.equal(await failedArchive.file('document.md').async('string'), '![图片](https://broken.test/photo.png)');
+assert.match(await failedArchive.file('export-notes.txt').async('string'), /HTTP 404/);
+assert.equal(assetRequests.length, 2, 'network images must retry through the existing image proxy');
+assert.ok(assetRequests[1].startsWith('https://images.weserv.nl/'));
+
+downloads.length = 0;
+await run(`currentMode = 'free'; markdownInput.value = '# 纯文本'; exportToMarkdown();`);
+const textArchive = await JSZip.loadAsync(await downloads[0].blob.arrayBuffer());
+assert.deepEqual(Object.keys(textArchive.files), ['document.md']);
+assert.equal(await textArchive.file('document.md').async('string'), '# 纯文本');
+downloads.length = 0;
+await run(`loadMarkdownArchiveParser = async () => { throw new Error('CDN unavailable'); }; exportToMarkdown();`);
+assert.equal(downloads.length, 0, 'library failures must not produce an incomplete archive');
+assert.equal(run('isExporting'), false);
+assert.equal(run('document.getElementById("exportMarkdownBtn").disabled'), false);

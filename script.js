@@ -137,6 +137,19 @@ async function ensureZipExportLibLoaded() {
     await loadScript('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js');
 }
 
+let markdownArchiveParserPromise;
+function loadMarkdownArchiveParser() {
+    if (!markdownArchiveParserPromise) {
+        markdownArchiveParserPromise = import('https://cdn.jsdelivr.net/npm/mdast-util-from-markdown@2.0.2/+esm')
+            .then(module => module.fromMarkdown)
+            .catch(error => {
+                markdownArchiveParserPromise = null;
+                throw error;
+            });
+    }
+    return markdownArchiveParserPromise;
+}
+
 async function ensurePdfMergeLibLoaded() {
     await loadScript('https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js');
 }
@@ -1201,6 +1214,7 @@ function setupExportButtons() {
     const exportPngBtn = document.getElementById('exportPngBtn');
     const exportPdfBtn = document.getElementById('exportPdfBtn');
     const exportHtmlBtn = document.getElementById('exportHtmlBtn');
+    const exportMarkdownBtn = document.getElementById('exportMarkdownBtn');
 
     if (exportPngBtn) {
         exportPngBtn.addEventListener('click', exportToPNG);
@@ -1213,6 +1227,9 @@ function setupExportButtons() {
     if (exportHtmlBtn) {
         exportHtmlBtn.addEventListener('click', exportToHTML);
     }
+    if (exportMarkdownBtn) {
+        exportMarkdownBtn.addEventListener('click', exportToMarkdown);
+    }
     updateExportButtons();
 }
 
@@ -1221,7 +1238,8 @@ function updateExportButtons() {
     const descriptions = {
         exportPngBtn: isXhs ? '将全部分页导出为 PNG 压缩包（ZIP）' : '导出 PNG 图片',
         exportPdfBtn: isXhs ? '将全部分页合并为一个 PDF 文档' : '导出 PDF 文档',
-        exportHtmlBtn: isXhs ? '小红书模式不支持导出 HTML，请使用 PNG 或 PDF' : '导出 HTML 页面'
+        exportHtmlBtn: isXhs ? '小红书模式不支持导出 HTML，请使用 PNG 或 PDF' : '导出 HTML 页面',
+        exportMarkdownBtn: '将完整 Markdown 和引用的图片打包为 ZIP'
     };
     Object.entries(descriptions).forEach(([id, title]) => {
         const button = document.getElementById(id);
@@ -2213,6 +2231,182 @@ async function renderExportPng(node, mode) {
         // 图片数据已转为 Blob，及时释放大画布，避免多页导出占满内存。
         canvas.width = canvas.height = 0;
         if (outputCanvas !== canvas) outputCanvas.width = outputCanvas.height = 0;
+    }
+}
+
+function markdownArchiveImageKey(source, storedImages) {
+    if (storedImages.has(source)) return storedImages.get(source);
+    if (/^(?:data:|madopic-image:)/i.test(source)) return source;
+    return new URL(source, window.location.href).href;
+}
+
+function collectMarkdownArchiveImages(markdown, parse, storedImages) {
+    const tree = parse(markdown);
+    const definitions = new Map();
+    const usedDefinitions = new Set();
+    const edits = [];
+    const images = new Map();
+    const visit = (node, callback) => {
+        callback(node);
+        node.children?.forEach(child => visit(child, callback));
+    };
+    visit(tree, node => {
+        if (node.type === 'definition' && !definitions.has(node.identifier)) definitions.set(node.identifier, node);
+    });
+    const image = source => {
+        let key;
+        try { key = markdownArchiveImageKey(source, storedImages); }
+        catch (_) { key = source; }
+        if (!images.has(key)) images.set(key, { source, key, index: images.size + 1 });
+        return images.get(key);
+    };
+    visit(tree, node => {
+        const start = node.position?.start.offset;
+        const end = node.position?.end.offset;
+        if (!Number.isInteger(start) || !Number.isInteger(end)) return;
+        if (node.type === 'image' || node.type === 'imageReference') {
+            const definition = node.type === 'image' ? node : definitions.get(node.identifier);
+            if (!definition?.url) return;
+            if (node.type === 'imageReference') {
+                if (usedDefinitions.has(definition)) return;
+                usedDefinitions.add(definition);
+                edits.push({ start: definition.position.start.offset, end: definition.position.end.offset,
+                    image: image(definition.url), label: definition.label || definition.identifier, title: definition.title });
+            } else {
+                edits.push({ start, end, image: image(definition.url), alt: node.alt || '', title: definition.title });
+            }
+        } else if (node.type === 'html' && /<img\b/i.test(node.value)) {
+            // template 保持 HTML 离线，不加载图片，也不执行源文件中的脚本。
+            const template = document.createElement('template');
+            template.innerHTML = node.value;
+            const references = Array.from(template.content.querySelectorAll('img[src]'))
+                .filter(img => !img.closest('pre, code'))
+                .map(img => ({ element: img, image: image(img.getAttribute('src')) }));
+            if (references.length) edits.push({ start, end, template, references });
+        }
+    });
+    return { edits, images: Array.from(images.values()) };
+}
+
+function markdownImageDataBlob(dataUrl) {
+    const match = /^data:(image\/[^;,]+)([^,]*),([\s\S]*)$/i.exec(dataUrl);
+    if (!match) throw new Error('图片数据格式无效');
+    const bytes = /;base64/i.test(match[2])
+        ? Uint8Array.from(atob(match[3].replace(/\s/g, '')), char => char.charCodeAt(0))
+        : new TextEncoder().encode(decodeURIComponent(match[3]));
+    return new Blob([bytes], { type: match[1] });
+}
+
+function markdownImageExtension(type) {
+    const mime = type.toLowerCase().split(';')[0];
+    const extensions = {
+        'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif',
+        'image/webp': 'webp', 'image/svg+xml': 'svg', 'image/avif': 'avif',
+        'image/bmp': 'bmp', 'image/tiff': 'tiff', 'image/x-icon': 'ico',
+        'image/vnd.microsoft.icon': 'ico'
+    };
+    if (!extensions[mime]) throw new Error('下载结果不是支持的图片格式');
+    return extensions[mime];
+}
+
+async function loadMarkdownArchiveImage(key) {
+    if (/^data:/i.test(key)) return markdownImageDataBlob(key);
+    if (key.startsWith('madopic-image:')) throw new Error('本地图片数据已丢失，请重新插入');
+    const url = new URL(key, window.location.href);
+    if (!['http:', 'https:', 'blob:'].includes(url.protocol)) throw new Error('不支持此图片地址');
+    const candidates = [url.href];
+    if (['http:', 'https:'].includes(url.protocol) && url.origin !== window.location.origin) {
+        candidates.push(corsProxyUrl(url.href));
+    }
+    let failure;
+    for (const candidate of candidates) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        try {
+            const response = await fetch(candidate, { signal: controller.signal, credentials: 'omit', referrerPolicy: 'no-referrer' });
+            if (!response.ok) throw new Error(`图片下载失败（HTTP ${response.status}）`);
+            const blob = await response.blob();
+            markdownImageExtension(blob.type);
+            if (!blob.size) throw new Error('图片内容为空');
+            return blob;
+        } catch (error) {
+            failure = error;
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+    throw failure;
+}
+
+function rewriteMarkdownArchiveImages(markdown, edits) {
+    const escapeLabel = text => text.replace(/[\\[\]]/g, '\\$&').replace(/\r?\n/g, ' ');
+    const escapeTitle = text => text.replace(/[\\"]/g, '\\$&').replace(/\r?\n/g, ' ');
+    // 从后向前替换 AST 提供的源文位置，保留其他正文、公式、分页符和代码的原始内容。
+    for (const edit of edits.slice().sort((a, b) => b.start - a.start)) {
+        let replacement;
+        if (edit.image?.path) {
+            const title = edit.title ? ` "${escapeTitle(edit.title)}"` : '';
+            replacement = edit.label !== undefined
+                ? `[${escapeLabel(edit.label)}]: ${edit.image.path}${title}`
+                : `![${escapeLabel(edit.alt)}](${edit.image.path}${title})`;
+        } else if (edit.template) {
+            let changed = false;
+            for (const reference of edit.references) {
+                if (!reference.image.path) continue;
+                reference.element.setAttribute('src', reference.image.path);
+                reference.element.removeAttribute('srcset');
+                changed = true;
+            }
+            if (changed) replacement = edit.template.innerHTML;
+        }
+        if (replacement !== undefined) markdown = markdown.slice(0, edit.start) + replacement + markdown.slice(edit.end);
+    }
+    return markdown;
+}
+
+async function exportToMarkdown() {
+    if (!beginExport()) return;
+    // 在首次等待前固定全文和图片数据，导出期间继续编辑不会改变本次结果。
+    const markdown = markdownInput.value;
+    const storedImages = new Map(imageDataStore);
+    const filename = `madopic-${getFormattedTimestamp()}-markdown.zip`;
+    try {
+        showNotification('正在打包 Markdown 和图片...', 'info');
+        const [parse] = await Promise.all([loadMarkdownArchiveParser(), ensureZipExportLibLoaded()]);
+        const { edits, images } = collectMarkdownArchiveImages(markdown, parse, storedImages);
+        const zip = new JSZip();
+        let next = 0;
+        const worker = async () => {
+            while (next < images.length) {
+                const image = images[next++];
+                try {
+                    const blob = await loadMarkdownArchiveImage(image.key);
+                    const extension = markdownImageExtension(blob.type);
+                    const bytes = await blob.arrayBuffer();
+                    image.path = `images/image-${String(image.index).padStart(3, '0')}.${extension}`;
+                    zip.file(image.path, bytes);
+                } catch (error) {
+                    image.error = error.name === 'AbortError' ? '图片下载超时' : error.message;
+                }
+            }
+        };
+        await Promise.all(Array.from({ length: Math.min(3, images.length) }, worker));
+        zip.file('document.md', rewriteMarkdownArchiveImages(markdown, edits));
+        const failures = images.filter(image => image.error);
+        if (failures.length) {
+            const details = failures.map(image => `${image.source.startsWith('data:') ? '内嵌图片' : image.source}\n原因：${image.error}`).join('\n\n');
+            zip.file('export-notes.txt', `有 ${failures.length} 张图片未能打包，document.md 中保留了它们的原始引用。\n网络图片仍需联网访问；丢失的本地图片需要重新插入后再导出。\n\n${details}\n`);
+        }
+        const archive = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+        downloadBlob(archive, filename);
+        showNotification(failures.length
+            ? `Markdown 已导出；${failures.length} 张图片未打包，详见 export-notes.txt`
+            : `Markdown 已导出，包含 ${images.length} 张图片！`, failures.length ? 'warning' : 'success');
+    } catch (error) {
+        console.error('Markdown 导出失败:', error);
+        showNotification('Markdown 导出失败，请重试', 'error');
+    } finally {
+        endExport();
     }
 }
 
