@@ -206,6 +206,12 @@ $$\begin{aligned}
 
 开发验证使用 Node.js 22 或更新版本，运行 `npm ci` 后执行 `npm test`。测试使用与页面一致的 Marked、KaTeX 版本验证公式解析。
 
+### 构建与 Vercel 部署
+
+运行 `npm run build` 生成 `dist/`，然后使用 HTTP 服务器提供该目录，例如 `python3 -m http.server 8080 --directory dist`。构建会把当前 Git commit 的前 7 位写入右上角版本按钮，点击打开 `huyiwen/xiaolin-madopic` 中对应提交，悬停可查看完整哈希。直接提供未构建的源码目录时，该位置显示「本地开发」。
+
+仓库中的 `vercel.json` 已指定构建命令 `npm run build` 和输出目录 `dist`。在 Vercel 导入此仓库并连接生产分支后，每次 push 会自动构建和部署。构建优先使用 Vercel 提供的 `VERCEL_GIT_COMMIT_SHA`，本地构建则读取 Git HEAD，因此版本按钮始终对应本次构建的代码，回滚部署也会显示对应的旧版本。仓库当前使用 SHA-1，按钮显示的是 Git commit 的短哈希。
+
 ## 更新日志
 
 ### 20250906

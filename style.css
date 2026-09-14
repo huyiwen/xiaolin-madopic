@@ -1195,29 +1195,28 @@ select {
     position: relative;
 }
 
-/* GitHub 链接样式 */
+/* 当前部署版本的 GitHub commit 链接 */
 .github-link {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 36px;
+    flex-shrink: 0;
+    padding: 0 8px;
     height: 36px;
     background: none;
     color: #24292e;
-    border-radius: 50%;
+    border-radius: var(--radius-sm);
     text-decoration: none;
-    font-size: 18px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    white-space: nowrap;
     transition: all 0.2s ease;
     margin-left: 4px;
 }
 
 .github-link:hover {
     color: #6366f1;
-    transform: scale(1.1);
-}
-
-.github-link i {
-    color: inherit;
+    background: var(--background-secondary);
 }
 
 /* 工具分隔线样式 */

@@ -27,7 +27,7 @@ assert.match(
 
 assert.match(
   index,
-  /<link rel="stylesheet" href="style\.css\?v=20260914-4">/,
+  /<link rel="stylesheet" href="style\.css\?v=20260914-5">/,
   'the stylesheet cache key must be updated with this release',
 );
 
